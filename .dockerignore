@@ -1,0 +1,9 @@
+asset
+data
+**/node_modules
+frontend/dist
+backend/static
+**/__pycache__
+.git
+*.md
+!README.md

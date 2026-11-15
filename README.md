@@ -1,0 +1,271 @@
+# FAVA
+
+**A self-hosted, phone-friendly player for your Faba® box backups.**
+
+Drop the content of your Faba box SD card into `asset/`, start the container, and
+listen to all your stories and songs from any phone, with search, filters, lyrics
+and Chromecast.
+
+> FAVA is an unofficial community project. It is not affiliated with or endorsed by
+> Faba / Fabacreative. Use it only with backups of content you own, and don't
+> redistribute the audio files.
+
+## Features
+
+- **Plays the original `.MKI` files directly.** They are decoded on the fly while
+  streaming (seeking works too), so you don't need a decrypted copy on disk.
+- **Automatic catalogue.** Album titles, track titles, categories, languages,
+  credits, lyrics and the figure picture are collected from every source available
+  (see [Metadata sources](#metadata-sources)).
+- **Verification.** Every track is checked: valid MPEG stream, duration, missing
+  `CPxx` files, MKI vs MP3 copies that differ. Booklets are checked too:
+  - a PDF filed under the wrong figure is detected;
+  - when the very same file appears under several figures, only the album whose
+    title matches the booklet's content uses it.
+- **Duplicates.** Albums with the same recording, sold as figures for different
+  languages, are detected through an audio fingerprint that ignores ID3 tags. They
+  are linked to each other and hidden from Home and Library by default.
+- **Spotify-style mobile UI.** Mini player, full-screen player, ±15 s skip, speed,
+  **sleep timer with fade-out**, resume where you left off, favourites, lyrics view,
+  queue, and lock-screen controls through the Media Session API. Installable as a
+  PWA.
+- **Profiles**, Netflix-style ("Chi ascolta?"). Each profile has its own
+  favourites and resume positions. The avatar is a stylised face or any figure
+  from your library, on a colour of your choice. The active profile is remembered
+  per device.
+- **Per-profile languages.** A profile can be limited to some languages; Home,
+  Library, search and counts follow it.
+- **Online details.** Description, age range and contents come from the matched
+  product page. Track titles are filled in only when the product lists exactly
+  one title per track (checked against the MP3 names: about 95% match), or as
+  "Story · parte N" for single-story albums.
+- **Password protection.** A family password to use the app, plus an optional
+  parents' password for management.
+- **Uploads from the browser.** A folder, files or a ZIP of backups, plus a
+  manual cover per album.
+- **Offline listening.** Download albums to the phone (needs HTTPS). The app
+  shell, album pages and audio then work without network, seeking included.
+- **Search** across album and track titles, voices/authors and lyrics, with accents
+  ignored. **Filters** for category (stories, songs, rhymes, learning), language,
+  series (Disney, PAW Patrol…), favourites and albums with lyrics.
+- **Chromecast** through the Google Cast Default Media Receiver, with the Remote
+  Playback API as a fallback.
+- An option to skip the short Faba intro and outro jingles.
+
+## Install on a NAS or home server (prebuilt image)
+
+A ready-made image for x86-64 and ARM64 (Raspberry Pi 4/5, most recent NAS) is
+published at `ghcr.io/leouzz/fava`. You need Docker with the compose plugin.
+
+```bash
+mkdir -p /srv/fava && cd /srv/fava
+base=https://raw.githubusercontent.com/leouzz/fava/main/deploy
+curl -fsSLO $base/docker-compose.yml
+curl -fsSLO $base/Caddyfile
+curl -fsSL  $base/.env.example -o .env     # then edit .env: passwords, LAN address, PUID/PGID
+mkdir -p asset data                        # copy your backups into ./asset (see below)
+sudo chown -R "$(id -u):$(id -g)" data     # data must be writable by PUID:PGID
+docker compose up -d                       # HTTPS as well: docker compose --profile https up -d
+```
+
+Open `http://<nas-ip>:8080` on your phone. The first start imports the library
+automatically. You can import again at any time from **Gestione → Avvia import**,
+or upload new backups from **Gestione → Carica backup**.
+
+To update to the latest version, run `docker compose pull && docker compose up -d`.
+
+**Moving an existing installation.** Copy the `data/` folder along with `asset/`.
+It holds the database, covers, the online-catalogue cache, profiles and
+favourites. Because the paths inside the container stay the same (`/assets`,
+`/data`), nothing has to be re-imported.
+
+## Build from source
+
+```bash
+git clone https://github.com/leouzz/fava.git && cd fava
+# copy your backup into ./asset (see below), then:
+docker compose up -d --build
+```
+
+## The `asset/` folder
+
+FAVA scans `asset/` recursively. Only the MKI dump is required; everything else
+adds metadata.
+
+```
+asset/
+├── MKI/                      # Faba box SD card dump (required)
+│   ├── K0010/
+│   │   ├── CP01.MKI          # the .MKI extension is optional
+│   │   └── CP02.MKI
+│   └── K0011/…
+├── MP3/                      # decoded copies with real names (optional)
+│   ├── 0010 - Il mondo secondo Tea!/
+│   │   ├── 00 - Intro Faba.mp3
+│   │   ├── 01 - Track title.mp3
+│   │   └── ZZ - Outro Faba.mp3
+│   └── list.csv              # "0010,Album title" lines, UTF-8 or UTF-16
+└── PDF/                      # official booklets (optional)
+    ├── K10 - Il mondo secondo Tea! - Documento.pdf   # credits + figure picture
+    ├── K106 - America Latina in musica - Testi.pdf   # tracklist + lyrics
+    └── K104 - Storie della buonanotte - Attivita.pdf # activity sheets
+```
+
+The folder names (`MKI`, `MP3`, `PDF`) don't matter. FAVA recognises files by
+their naming patterns.
+
+- `Kxxxx` is the 4-digit figure ID. It is the same number the NFC tag carries.
+- `CPnn` files are the tracks, in playback order.
+- In the MP3 folders, files are paired with the `CPnn` files **by position**:
+  sorted file *n* corresponds to `CP{n}`.
+
+## Metadata sources
+
+| Data           | Priority (first match wins) |
+| -------------- | --------------------------- |
+| Album title    | MP3 folder name → `list.csv` → community registry → PDF file name → booklet title |
+| Track title    | MP3 file name (unless it's a generic `Traccia N`) → booklet tracklist → `Traccia N` |
+| Category       | Registry SKU digit (`FFR1…` stories, `FFR2…` rhymes, `FFR3…` music, `FFR4…` learning) → booklet subtitle → keywords in the title → median track duration |
+| Language       | Booklet subtitle → registry → stop-word detection on the titles |
+| Cover          | `asset/covers/` → `Documento` booklet picture → official online catalogue → retailers (see below) |
+| Credits        | `Documento` booklet (text, voices, music, sound design…) |
+| Lyrics         | `Testi` booklet, matched to tracks by title |
+| Intro / outro  | Named `Intro/Outro Faba`, or short tracks beyond the booklet tracklist |
+
+The community registry is
+[`TAGS.md` from myfaba-hacks](https://github.com/wansors/myfaba-hacks/blob/main/TAGS.md).
+It is downloaded at import time and cached in `data/`. Set `FAVA_REGISTRY_URL=""`
+to work fully offline.
+
+**Online covers.** For albums without a booklet picture, FAVA looks the figure up in
+the official myfaba stores (`.it`, `.es`, `.fr`). It picks candidates from each
+store's product sitemap and accepts a product only when its **SKU** equals the
+registry SKU. Without a SKU, it needs a near-identical name in the album's language.
+The white studio background is removed so the photo matches the booklet covers.
+Pages and images are fetched once, slowly, and cached in `data/catalog`; they stay
+on your server and are never committed or redistributed. Disable this with
+`FAVA_ONLINE_COVERS=0`.
+
+**Retired figures.** Figures that are no longer sold are looked up in retailer
+product sitemaps (default: italiano-bello.com, set with `FAVA_RETAILER_SITEMAPS`).
+Only the sitemap is read; it already lists every product's images. Two outcomes:
+
+- A near-identical name with a white-background photo, not claimed by another
+  album, is applied automatically.
+- Anything less certain goes to **Gestione → Copertine trovate online**, where you
+  confirm it (✓) or discard it (✗).
+
+Automatic covers can be undone there too ("Non è lei"). Decisions are remembered
+across imports.
+
+**Manual covers.** Put `asset/covers/K0010.png` (or `0010.jpg`, `.webp`) to force a
+picture for any album. Manual covers always win.
+
+Parsed booklets and audio probes are cached by file size and mtime, so re-imports
+take seconds.
+
+## The MKI format
+
+An `.MKI` file is a normal MP3 with every byte remapped through a fixed
+substitution table chosen by `position mod 4`. Decoding is a lookup that can start
+at any offset, which is what allows range requests and seeking while streaming.
+See [`backend/fava/mki.py`](backend/fava/mki.py). The mapping was documented by the
+[myfaba-hacks](https://github.com/wansors/myfaba-hacks) project.
+
+## Chromecast
+
+The Cast button appears in the full-screen player. It needs:
+
+1. **Chrome** on Android or desktop. iOS and Safari have no Cast SDK; they can use
+   AirPlay through the Remote Playback fallback where it's available.
+2. **A secure context.** Chrome only enables Cast on HTTPS (or `localhost`). The
+   compose file includes an optional Caddy proxy:
+   `docker compose --profile https up -d`, then open `https://<server-ip>:8443`.
+3. **A media URL the Chromecast can reach.** The Chromecast downloads the audio
+   itself, so set `FAVA_PUBLIC_URL=http://<server-lan-ip>:8080`.
+
+## Passwords
+
+Copy `.env.example` to `.env` and set:
+
+- `FAVA_PASSWORD`: everyone at home uses this one. Without it, the app shows a
+  login screen to anyone.
+- `FAVA_ADMIN_PASSWORD` (optional): unlocks import, uploads, profile management
+  and cover review. Kids can listen and add favourites, but can't change anything.
+  Without it, the family password unlocks everything.
+
+Sessions are signed cookies valid for 180 days. Wrong passwords are throttled per
+IP. Media URLs given to the Chromecast carry a signed key instead of the cookie.
+The signing secret is generated in `data/secret.key`, or set `FAVA_SECRET`. Set
+a password **before** exposing FAVA outside your home network, and put it behind
+HTTPS.
+
+## Uploading backups
+
+**Gestione → Carica backup** accepts a whole folder (on desktop), single files,
+or a ZIP containing `K0010/CP01.MKI`-style folders, MP3s and PDFs. Files are
+streamed to `data/uploads/` (the `asset` mount stays read-only), ZIPs are
+extracted safely, and an import starts automatically. Uploaded batches can be
+deleted from the same page. A cover can be replaced from the album page
+("Cambia copertina"); it is stored in `data/covers-manual/`.
+
+## Offline listening
+
+Tap ⤓ on an album page to store its audio on the device. A service worker then
+serves it, with range requests, so seeking works offline. Album pages, covers
+and the app itself are cached too. Browsers only allow this on **HTTPS** (or
+`localhost`): use the Caddy profile below, or any HTTPS reverse proxy. Downloads
+can be removed from the album page or from Gestione, which also shows the
+storage used.
+
+## Configuration
+
+| Variable               | Default            | Description |
+| ---------------------- | ------------------ | ----------- |
+| `FAVA_ASSET_DIR`       | `/assets`          | Folder with the backups (mounted read-only) |
+| `FAVA_DATA_DIR`        | `/data`            | SQLite database, covers and cache |
+| `FAVA_PUBLIC_URL`      | *(browser origin)* | Base URL the Chromecast uses for media |
+| `FAVA_IMPORT_ON_START` | `auto`             | `auto` (first start, or when the asset path changes), `always`, `never` |
+| `FAVA_PREFER`          | `mki`              | Stream the original MKI files or the MP3 copies |
+| `FAVA_REGISTRY_URL`    | myfaba-hacks `TAGS.md` | Empty string disables the registry |
+| `FAVA_COVERS`          | `1`                | `0` skips cover extraction from booklets |
+| `FAVA_ONLINE_COVERS`   | `1`                | `0` disables the online catalogue lookup |
+| `FAVA_CATALOG_STORES`  | myfaba `.it,.es,.fr` | Comma-separated store base URLs |
+| `FAVA_RETAILER_SITEMAPS` | italiano-bello.com | Comma-separated retailer sitemap URLs; empty disables |
+| `FAVA_PASSWORD`        | *(empty)*          | Family password (empty = open access) |
+| `FAVA_ADMIN_PASSWORD`  | *(empty)*          | Parents' password for management actions |
+| `FAVA_SECRET`          | *(generated)*      | Cookie/media-key signing secret (`data/secret.key`) |
+| `FAVA_ONLINE_DETAILS`  | `1`                | `0` disables descriptions / track titles from product pages |
+| `PORT`                 | `8080`             | HTTP port |
+
+## Development
+
+```bash
+# backend (Python 3.11+)
+cd backend
+python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+FAVA_ASSET_DIR=../asset FAVA_DATA_DIR=../data python -m fava   # http://localhost:8080
+python -m fava.importer                                        # import from the CLI
+
+# frontend (Node 20+), in another terminal
+cd frontend
+npm install
+npm run dev     # http://localhost:5173, proxies /api to :8080
+```
+
+Stack: FastAPI + SQLite (FTS5) + mutagen + pdfplumber/pypdfium2 on the backend;
+React + Vite + Tailwind with shadcn-style components (Radix, vaul) + TanStack
+Query + zustand on the frontend.
+
+### API
+
+| Endpoint | Purpose |
+| -------- | ------- |
+| `GET /api/albums?q=&category=&language=&series=&favorites=&lyrics=&sort=` | List and filter albums |
+| `GET /api/albums/{id}` | Album with tracks, booklets, issues and resume position |
+| `GET /api/search?q=` | Full-text search (albums, tracks, lyrics, credits) |
+| `GET /api/stream/{track_id}` | Audio stream with HTTP Range support |
+| `GET /api/facets` | Categories, languages, series and stats |
+| `POST /api/import`, `GET /api/import/status` | Start an import and follow its progress |
+| `GET /api/issues` | Verification report |

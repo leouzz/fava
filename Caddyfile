@@ -1,0 +1,10 @@
+# HTTPS with a locally generated certificate (accept the warning once on each device,
+# or install Caddy's root CA from ./data/caddy/caddy/pki/authorities/local/root.crt).
+# Replace with your own domain to get a real Let's Encrypt certificate.
+:8443 {
+	tls internal {
+		on_demand
+	}
+	encode gzip
+	reverse_proxy fava:8080
+}

@@ -1,0 +1,40 @@
+# FAVA on a NAS / home server, using the prebuilt image (no build needed).
+#
+#   1. put this file, Caddyfile and .env (from .env.example) in a folder, e.g. /srv/fava
+#   2. copy your backups into ./asset   (or point FAVA_ASSET_PATH to an existing share)
+#   3. docker compose up -d             (HTTPS too: docker compose --profile https up -d)
+#   4. update later with: docker compose pull && docker compose up -d
+
+services:
+  fava:
+    image: ${FAVA_IMAGE:-ghcr.io/leouzz/fava:latest}
+    container_name: fava
+    restart: unless-stopped
+    # run as the NAS user that owns the data folder (see `id` on the NAS)
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${FAVA_PORT:-8080}:8080"
+    volumes:
+      - ${FAVA_ASSET_PATH:-./asset}:/assets:ro   # backups (MKI / MP3 / PDF), read-only
+      - ${FAVA_DATA_PATH:-./data}:/data          # database, covers, cache, uploads
+    environment:
+      FAVA_PASSWORD: ${FAVA_PASSWORD:-}
+      FAVA_ADMIN_PASSWORD: ${FAVA_ADMIN_PASSWORD:-}
+      FAVA_PUBLIC_URL: ${FAVA_PUBLIC_URL:-}
+      FAVA_IMPORT_ON_START: ${FAVA_IMPORT_ON_START:-auto}
+      FAVA_PREFER: ${FAVA_PREFER:-mki}
+      FAVA_ONLINE_COVERS: ${FAVA_ONLINE_COVERS:-1}
+      FAVA_ONLINE_DETAILS: ${FAVA_ONLINE_DETAILS:-1}
+      TZ: ${TZ:-Europe/Rome}
+
+  # HTTPS (needed by Chrome for Chromecast and for offline downloads)
+  caddy:
+    image: caddy:2.8.4-alpine
+    profiles: ["https"]
+    restart: unless-stopped
+    ports:
+      - "${FAVA_HTTPS_PORT:-8443}:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${FAVA_DATA_PATH:-./data}/caddy:/data
+    depends_on: [fava]

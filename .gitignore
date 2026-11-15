@@ -1,0 +1,15 @@
+# Personal backups and generated data: never commit them
+asset/*
+!asset/README.md
+data/
+
+# Build / deps
+node_modules/
+frontend/dist/
+backend/static/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.tsbuildinfo

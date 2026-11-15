@@ -1,0 +1,228 @@
+import { profileHeader } from "./profile";
+import { useAuth, type AuthStatus } from "./auth";
+
+export interface Profile {
+  id: number;
+  name: string;
+  avatar: string;
+  color: string;
+  favorites: number;
+  languages: string[];
+}
+
+export interface Album {
+  id: string;
+  title: string;
+  title_source: string;
+  subtitle: string | null;
+  category: string;
+  language: string | null;
+  series: string | null;
+  sku: string | null;
+  track_count: number;
+  duration: number;
+  has_cover: number;
+  cover_source: "booklet" | "catalog" | "retailer" | "manual" | null;
+  cover: string | null;
+  color: string | null;
+  credits: Record<string, string[]>;
+  has_lyrics: number;
+  sources: string[];
+  status: "ok" | "warning" | "error" | null;
+  duplicate_of: string | null;
+  favorite?: boolean;
+  progress?: { track_id: number; position: number; idx?: number; title?: string } | null;
+}
+
+export interface Track {
+  id: number;
+  idx: number;
+  title: string;
+  title_source: string;
+  duration: number;
+  bitrate: number | null;
+  source_kind: "mki" | "mp3";
+  is_extra: number;
+  valid: number;
+  has_lyrics: boolean;
+}
+
+export interface Issue {
+  id?: number;
+  album_id?: string;
+  album_title?: string;
+  track_idx: number | null;
+  level: "info" | "warning" | "error";
+  code: string;
+  message: string;
+}
+
+export interface AlbumDetail extends Album {
+  tracks: Track[];
+  documents: { id: number; kind: string; name: string; url: string }[];
+  issues: Issue[];
+  same_audio: { id: string; title: string; language: string | null }[];
+  description: string | null;
+  age: string | null;
+  contents: { name: string; items: string[] }[];
+  product_url: string | null;
+}
+
+export interface Facet {
+  value: string;
+  count: number;
+}
+
+export interface Facets {
+  categories: Facet[];
+  languages: Facet[];
+  series: Facet[];
+  stats: {
+    albums: number;
+    tracks: number;
+    duration: number;
+    last_import: string | null;
+    favorites: number;
+    duplicates: number;
+  };
+}
+
+export interface SearchTrack {
+  kind: "track" | "lyrics";
+  track_id: number;
+  snip: string;
+  title: string;
+  idx: number;
+  duration: number;
+  album_id: string;
+  album_title: string;
+  cover: string | null;
+}
+
+export interface CoverCandidate {
+  id: number;
+  album_id: string;
+  album_title: string;
+  source: string;
+  product_url: string;
+  product_name: string | null;
+  score: number | null;
+  status: "pending" | "auto";
+  image_url: string;
+}
+
+export interface ImportStatus {
+  running: boolean;
+  phase: string;
+  done: number;
+  total: number;
+  message: string;
+  log: string[];
+  stats: Record<string, number>;
+  asset_dir: string;
+  finished_at: number | null;
+}
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+async function req<T>(url: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(url, { ...init, headers: { ...profileHeader(), ...(init?.headers || {}) } });
+  if (r.status === 401 && !url.startsWith("/api/auth/")) useAuth.setState((s) => ({ stale: s.stale + 1 }));
+  if (!r.ok) {
+    let detail = r.statusText;
+    try {
+      detail = (await r.json()).detail ?? detail;
+    } catch {
+      /* not json */
+    }
+    throw new ApiError(r.status, detail);
+  }
+  return r.json();
+}
+
+export interface AlbumQuery {
+  q?: string;
+  category?: string[];
+  language?: string[];
+  series?: string;
+  favorites?: boolean;
+  lyrics?: boolean;
+  sort?: string;
+  hideDuplicates?: boolean;
+}
+
+export const api = {
+  albums: (p: AlbumQuery = {}) => {
+    const u = new URLSearchParams();
+    if (p.q) u.set("q", p.q);
+    if (p.category?.length) u.set("category", p.category.join(","));
+    if (p.language?.length) u.set("language", p.language.join(","));
+    if (p.series) u.set("series", p.series);
+    if (p.favorites) u.set("favorites", "true");
+    if (p.lyrics) u.set("lyrics", "true");
+    if (p.sort) u.set("sort", p.sort);
+    if (p.hideDuplicates) u.set("hide_duplicates", "true");
+    return req<{ items: Album[] }>(`/api/albums?${u}`).then((r) => r.items);
+  },
+  album: (id: string) => req<AlbumDetail>(`/api/albums/${id}`),
+  facets: () => req<Facets>("/api/facets"),
+  search: (q: string) => req<{ albums: Album[]; tracks: SearchTrack[] }>(`/api/search?q=${encodeURIComponent(q)}`),
+  lyrics: (trackId: number) => req<{ lyrics: string | null }>(`/api/tracks/${trackId}/lyrics`),
+  continue: () => req<{ items: Album[] }>("/api/continue").then((r) => r.items),
+  favorite: (id: string, on: boolean) => req(`/api/favorites/${id}`, { method: on ? "POST" : "DELETE" }),
+  progress: (album_id: string, track_id: number, position: number) =>
+    fetch("/api/progress", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...profileHeader() },
+      body: JSON.stringify({ album_id, track_id, position }),
+      keepalive: true,
+    }).catch(() => undefined),
+  startImport: () => req<{ started: boolean }>("/api/import", { method: "POST" }),
+  importStatus: () => req<ImportStatus>("/api/import/status"),
+  issues: () =>
+    req<{
+      items: Issue[];
+      summary: Record<string, number>;
+      track_sources: Record<string, number>;
+      title_sources: Record<string, number>;
+    }>("/api/issues"),
+  coverCandidates: () => req<{ items: CoverCandidate[] }>("/api/covers/candidates").then((r) => r.items),
+  reviewCover: (id: number, action: "accept" | "reject") =>
+    req(`/api/covers/candidates/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    }),
+  profiles: () => req<{ items: Profile[] }>("/api/profiles").then((r) => r.items),
+  authStatus: () => req<AuthStatus>("/api/auth/status"),
+  login: (password: string) =>
+    req<{ role: string }>("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    }),
+  logout: () => req("/api/auth/logout", { method: "POST" }),
+  languages: () => req<{ items: Facet[] }>("/api/languages").then((r) => r.items),
+  createProfile: (p: Omit<Profile, "id" | "favorites">) =>
+    req<{ id: number }>("/api/profiles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(p),
+    }),
+  updateProfile: (id: number, p: Omit<Profile, "id" | "favorites">) =>
+    req(`/api/profiles/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(p),
+    }),
+  deleteProfile: (id: number) => req(`/api/profiles/${id}`, { method: "DELETE" }),
+  config: () => req<{ public_url: string | null }>("/api/config"),
+  streamUrl: (trackId: number) => `/api/stream/${trackId}`,
+};

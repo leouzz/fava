@@ -1,0 +1,42 @@
+services:
+  fava:
+    build: .
+    image: fava:latest
+    container_name: fava
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./asset:/assets:ro      # your Faba backups (MKI / MP3 / PDF)
+      - ./data:/data            # database, covers, cache
+    environment:
+      # Family password (required to use the app) and optional parents' password
+      # (import, uploads, profiles, cover review). Leave empty for open access.
+      FAVA_PASSWORD: ${FAVA_PASSWORD:-}
+      FAVA_ADMIN_PASSWORD: ${FAVA_ADMIN_PASSWORD:-}
+      # Address of this server as seen from your Chromecast / phone (LAN IP).
+      # Needed for casting: the Chromecast fetches the audio by itself.
+      FAVA_PUBLIC_URL: ${FAVA_PUBLIC_URL:-}
+      # auto = import on first start | always = re-import at every start | never
+      FAVA_IMPORT_ON_START: ${FAVA_IMPORT_ON_START:-auto}
+      # mki = stream original MKI files decoded on the fly | mp3 = prefer MP3 copies
+      FAVA_PREFER: ${FAVA_PREFER:-mki}
+      # Look up missing figure pictures in the official online catalogue (0 = off)
+      FAVA_ONLINE_COVERS: ${FAVA_ONLINE_COVERS:-1}
+      # Description, age range and track titles from the matched product page (0 = off)
+      FAVA_ONLINE_DETAILS: ${FAVA_ONLINE_DETAILS:-1}
+      # Community figure registry used to enrich titles/languages ("" to disable)
+      # FAVA_REGISTRY_URL: ""
+
+  # Optional HTTPS front-end (required by Chrome for the Cast button when not on localhost).
+  # Start with:  docker compose --profile https up -d
+  caddy:
+    image: caddy:2.8.4-alpine
+    profiles: ["https"]
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+    depends_on: [fava]
