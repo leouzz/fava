@@ -9,6 +9,8 @@ export interface Profile {
   favorites: number;
   languages: string[];
   audiobooks: AudiobookAccess;
+  /** Easy mode: NFC cards and big buttons, leaving needs the parents' password */
+  easy: boolean;
 }
 
 /** Which audiobooks a profile sees. */
@@ -101,6 +103,16 @@ export interface AlbumDetail extends Album {
   product_url: string | null;
   /** audiobooks: fields filled from the web (cover, description, author, audience) */
   online_fields: string[] | null;
+}
+
+/** An NFC card paired to an album or audiobook. */
+export interface NfcTag {
+  uid: string;
+  target_kind: "album";
+  target_id: string;
+  created_at: string;
+  /** null when the album is no longer in the library */
+  album: { id: string; kind: "faba" | "audiobook"; title: string; cover: string | null; color: string | null; category: string } | null;
 }
 
 export interface Facet {
@@ -208,8 +220,9 @@ export interface AlbumQuery {
   lyrics?: boolean;
   sort?: string;
   hideDuplicates?: boolean;
-  kind?: "faba" | "audiobook";
+  kind?: "faba" | "audiobook" | "all";
   audience?: Audience;
+  limit?: number;
 }
 
 export const api = {
@@ -225,6 +238,7 @@ export const api = {
     if (p.hideDuplicates) u.set("hide_duplicates", "true");
     if (p.kind) u.set("kind", p.kind);
     if (p.audience) u.set("audience", p.audience);
+    if (p.limit) u.set("limit", String(p.limit));
     return req<{ items: Album[] }>(`/api/albums?${u}`).then((r) => r.items);
   },
   album: (id: string) => req<AlbumDetail>(`/api/albums/${id}`),
@@ -311,6 +325,20 @@ export const api = {
       body: JSON.stringify(p),
     }),
   deleteProfile: (id: number) => req(`/api/profiles/${id}`, { method: "DELETE" }),
+  checkAdmin: (password: string) =>
+    req<{ ok: boolean }>("/api/auth/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    }),
+  nfcTags: () => req<{ items: NfcTag[] }>("/api/nfc/tags").then((r) => r.items),
+  pairNfcTag: (uid: string, album_id: string) =>
+    req<{ uid: string }>(`/api/nfc/tags/${encodeURIComponent(uid)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ album_id }),
+    }),
+  unpairNfcTag: (uid: string) => req(`/api/nfc/tags/${encodeURIComponent(uid)}`, { method: "DELETE" }),
   config: () => req<{ public_url: string | null }>("/api/config"),
   streamUrl: (trackId: number) => `/api/stream/${trackId}`,
 };

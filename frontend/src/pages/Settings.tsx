@@ -10,6 +10,7 @@ import { CoverReview } from "@/components/CoverReview";
 import { AdminOnly, SessionCard } from "@/components/AuthGate";
 import { OfflineCard } from "@/components/OfflineUi";
 import { UploadCard } from "@/components/UploadCard";
+import { EasyModeCard, NfcTagsCard } from "@/components/NfcPair";
 import { useActiveProfile } from "@/components/ProfilePicker";
 import { Avatar } from "@/components/Avatar";
 import { useProfile } from "@/lib/profile";
@@ -137,6 +138,12 @@ export function SettingsPage() {
       )}
 
       <ProfilesCard />
+
+      <EasyModeCard />
+
+      <AdminOnly what="Tessere NFC">
+        <NfcTagsCard />
+      </AdminOnly>
 
       <AdminOnly what="Copertine trovate online">
         <CoverReview />

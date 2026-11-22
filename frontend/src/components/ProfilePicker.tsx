@@ -76,7 +76,10 @@ function ProfilePicker({ profiles }: { profiles: Profile[] }) {
                 </span>
               )}
             </span>
-            <span className="max-w-full truncate text-base font-bold text-white/85 group-hover:text-white">{p.name}</span>
+            <span className="flex max-w-full items-center gap-1.5 text-base font-bold text-white/85 group-hover:text-white">
+              <span className="truncate">{p.name}</span>
+              {p.easy && <span className="shrink-0 rounded bg-primary/25 px-1.5 text-[10px] font-black uppercase text-primary">Easy</span>}
+            </span>
           </button>
         ))}
         {admin && profiles.length < 12 && (
@@ -126,6 +129,7 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
   const [tab, setTab] = useState<"faces" | "figures">(avatar.startsWith("figure:") ? "figures" : "faces");
   const [langs, setLangs] = useState<string[]>(profile?.languages ?? []);
   const [books, setBooks] = useState<AudiobookAccess>(profile?.audiobooks ?? "all");
+  const [easy, setEasy] = useState(profile?.easy ?? false);
   const { data: allLangs = [] } = useQuery({ queryKey: ["languages"], queryFn: api.languages });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -140,7 +144,7 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
     if (!name.trim()) return setError("Scrivi un nome");
     setBusy(true);
     try {
-      const body = { name: name.trim(), avatar, color, languages: langs, audiobooks: books };
+      const body = { name: name.trim(), avatar, color, languages: langs, audiobooks: books, easy };
       if (profile) {
         await api.updateProfile(profile.id, body);
         await qc.invalidateQueries({ queryKey: ["profiles"] });
@@ -244,6 +248,22 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
             ))}
           </div>
         </div>
+
+        <label className="flex items-center justify-between gap-4 px-5 pb-3">
+          <span>
+            <span className="block text-xs font-bold uppercase tracking-wider text-muted-foreground">Modalità Easy</span>
+            <span className="block text-xs text-white/60">
+              Per i più piccoli: si avvicina una tessera NFC e parte la storia, con pochi pulsanti grandi. Per uscire
+              serve la password genitori.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={easy}
+            onChange={(e) => setEasy(e.target.checked)}
+            className="h-5 w-5 shrink-0 accent-[hsl(var(--primary))]"
+          />
+        </label>
 
         <div className="flex gap-1 px-5">
           {(["faces", "figures"] as const).map((t) => (

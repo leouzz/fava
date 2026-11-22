@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS u.profiles (
     color       TEXT NOT NULL DEFAULT '#ff6b5e',
     languages   TEXT,                                -- "it,fr" (NULL = all)
     audiobooks  TEXT NOT NULL DEFAULT 'all',             -- all | kids | none
+    easy        INTEGER NOT NULL DEFAULT 0,          -- 1 = Easy mode (NFC cards, big buttons)
     created_at  TEXT DEFAULT (datetime('now'))
 );
 
@@ -176,6 +177,14 @@ CREATE TABLE IF NOT EXISTS u.profile_progress (
     updated_at  TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (profile_id, album_id)
 );
+
+-- NFC cards paired to an album or audiobook (Easy mode)
+CREATE TABLE IF NOT EXISTS u.nfc_tags (
+    uid          TEXT PRIMARY KEY,                   -- card serial number, lowercase hex without separators
+    target_kind  TEXT NOT NULL DEFAULT 'album',      -- album (room for playlists later)
+    target_id    TEXT NOT NULL,
+    created_at   TEXT DEFAULT (datetime('now'))
+);
 """
 
 MIGRATIONS = {"cover_source": "TEXT", "duplicate_of": "TEXT", "description": "TEXT", "age": "TEXT",
@@ -186,7 +195,8 @@ CANDIDATE_MIGRATIONS = {"data": "TEXT"}
 
 TRACK_MIGRATIONS = {"chapters": "TEXT"}
 
-PROFILE_MIGRATIONS = {"languages": "TEXT", "audiobooks": "TEXT NOT NULL DEFAULT 'all'"}
+PROFILE_MIGRATIONS = {"languages": "TEXT", "audiobooks": "TEXT NOT NULL DEFAULT 'all'",
+                      "easy": "INTEGER NOT NULL DEFAULT 0"}
 
 _lock = threading.Lock()
 

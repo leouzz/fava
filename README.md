@@ -51,6 +51,11 @@ and Chromecast.
 - **Chromecast** through the Google Cast Default Media Receiver, with the Remote
   Playback API as a fallback.
 - An option to skip the short Faba intro and outro jingles.
+- **NFC cards and Easy mode.** Pair any NFC card with an album or audiobook,
+  then hold the card to the phone and it plays. Easy mode, turned on per
+  profile, is a full-screen view for small kids with a few big buttons, handy on
+  a dedicated Android phone (see
+  [NFC cards and Easy mode](#nfc-cards-and-easy-mode)).
 - **Audiobooks**, in their own section. Drop in `.m4b` files (or folders of
   `.mp3` / `.m4a`), or upload them from the browser. Chapters, author, narrator
   and cover are read from the files. Each book remembers its own speed (up to 2×).
@@ -284,6 +289,53 @@ and the app itself are cached too. Browsers only allow this on **HTTPS** (or
 can be removed from the album page or from Gestione, which also shows the
 storage used.
 
+## NFC cards and Easy mode
+
+Hold a card to the phone and its album starts, like a figure on the Faba box.
+
+**What you need**
+
+- An Android phone with NFC, running **Chrome**. Web NFC does not exist on iPhone
+  or in Firefox, Samsung Internet or desktop browsers.
+- FAVA opened over **HTTPS** (the Caddy profile or any reverse proxy), because
+  Chrome only offers NFC to secure pages.
+- Cards with an **NTAG** chip (NTAG213/215/216) or another NFC Forum tag. Cards
+  sold as "Mifare Classic", "S50" or "13.56 MHz 1K" only work on phones with an NXP
+  NFC chip. On the others Chrome reports them as unreadable and FAVA says so. The
+  cards are recognised by their serial number, so nothing is written on them and
+  they can stay blank.
+
+**Pairing** (parents' password). Go to **Gestione → Tessere NFC → Associa**, hold
+a card to the phone and pick the album. "Associa un'altra" pairs a whole pile in
+a row. You can also tap the NFC button on an album or audiobook page and then
+hold the card. A card can be moved to another album at any time, and several
+cards can start the same album. Pairings live in `data/user.db`, so a re-import
+keeps them.
+
+**Easy mode** is a profile setting: in **Chi ascolta? → Gestisci profili**, edit the
+kid's profile and turn on *Modalità Easy* (parents' password). While that profile
+is active the phone shows Easy mode, across reloads and restarts too.
+
+- After every start, one tap on "Tocca per iniziare" is needed: Chrome asks for
+  it before allowing NFC and sound.
+- Holding a card plays its album from where this profile left off (from the top
+  once it was finished). The same card resumes a paused album; another card
+  switches album. **Dall'inizio** restarts the album from the first track.
+- The only other controls are previous, play/pause and next. The screen is kept
+  on, and the Android back gesture is ignored.
+- To leave, hold the lock in the top corner for 2 seconds, then enter the
+  parents' password (or answer a multiplication when FAVA has no passwords).
+  *Chi ascolta?* opens: choose a profile without Easy mode.
+- Without NFC (desktop, iPhone, plain HTTP) Easy mode shows the paired albums as
+  big tiles to tap, which is handy for trying it out.
+
+**A dedicated phone.** Install FAVA as an app from Chrome's menu and choose the
+kid's profile (with Easy mode on). Then, in Android settings, enable **App pinning**
+(Security → *Pin app* / *Screen pinning*) and pin FAVA, so the kid can't leave it.
+Keep the phone on the charger. Web NFC only reads while the screen is on and
+FAVA is in the foreground, which Easy mode takes care of. Albums downloaded for
+offline listening also play from cards without network.
+
 ## Configuration
 
 | Variable               | Default            | Description |
@@ -336,3 +388,4 @@ Query + zustand on the frontend.
 | `GET /api/facets` | Categories, languages, series and stats |
 | `POST /api/import`, `GET /api/import/status` | Start an import and follow its progress |
 | `GET /api/issues` | Verification report |
+| `GET /api/nfc/tags`, `PUT /api/nfc/tags/{uid}` `{album_id}`, `DELETE /api/nfc/tags/{uid}` | NFC card pairings (changes need the parents' password) |

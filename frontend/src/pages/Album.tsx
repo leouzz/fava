@@ -26,6 +26,7 @@ import { DownloadButton } from "@/components/OfflineUi";
 import { isAdmin, useAuth } from "@/lib/auth";
 import { current, usePlayer } from "@/player/store";
 import { AudiobookView } from "./Audiobook";
+import { PairTagButton } from "@/components/NfcPair";
 
 const ROLE: Record<string, string> = {
   text: "Testi",
@@ -141,6 +142,7 @@ function Actions({ album }: { album: AlbumDetail }) {
         </Button>
       )}
       <div className="flex-1" />
+      <PairTagButton album={album} />
       <DownloadButton album={album} />
       <button
         aria-label="Riproduzione casuale"

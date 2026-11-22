@@ -14,6 +14,7 @@ import { isAdmin, useAuth } from "@/lib/auth";
 import { AdminCover } from "./Album";
 import { BookmarkList, useBookmarks } from "@/components/Bookmarks";
 import { BookOnline, ONLINE_SOURCE } from "@/components/BookOnline";
+import { PairTagButton } from "@/components/NfcPair";
 
 interface Row {
   key: string;
@@ -213,6 +214,7 @@ function BookActions({ album, rows, listened, finished }: { album: AlbumDetail; 
       <button aria-label="Preferito" onClick={toggleFav} className="p-1.5 active:scale-90">
         <Heart className={cn("h-7 w-7", fav ? "fill-primary text-primary" : "text-white/70")} />
       </button>
+      <PairTagButton album={album} />
       <DownloadButton album={album} />
       <div className="relative">
         <button aria-label="Altre azioni" onClick={() => setMenu(!menu)} className="p-1.5 text-white/70 active:scale-90">

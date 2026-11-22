@@ -184,6 +184,18 @@ def login(body: LoginIn, request: Request):
     return resp
 
 
+@app.post("/api/auth/check")
+def check_admin(body: LoginIn, request: Request) -> dict:
+    """Verify the parents' password without touching the session (leaving Easy mode)."""
+    ip = request.client.host if request.client else "?"
+    auth.throttle(ip)
+    if auth.check_password(body.password) != "admin":
+        auth.failed(ip)
+        raise HTTPException(401, "Password errata")
+    auth.reset(ip)
+    return {"ok": True}
+
+
 @app.post("/api/auth/logout")
 def logout(request: Request):
     resp = JSONResponse({"ok": True})
@@ -733,6 +745,7 @@ class ProfileIn(BaseModel):
     color: str = "#ff6b5e"
     languages: list[str] = []
     audiobooks: str = "all"  # all | kids | none
+    easy: bool = False       # Easy mode: NFC cards and big buttons, leaving needs the parents' password
 
 
 def _check_profile(p: ProfileIn) -> ProfileIn:
@@ -748,9 +761,10 @@ def _check_profile(p: ProfileIn) -> ProfileIn:
 
 
 def _profiles(conn) -> list[dict]:
-    return [dict(r) | {"favorites": r["favs"], "languages": [x for x in (r["languages"] or "").split(",") if x]}
+    return [dict(r) | {"favorites": r["favs"], "languages": [x for x in (r["languages"] or "").split(",") if x],
+                       "easy": bool(r["easy"])}
             for r in conn.execute(
-        "SELECT p.id, p.name, p.avatar, p.color, p.languages, p.audiobooks, "
+        "SELECT p.id, p.name, p.avatar, p.color, p.languages, p.audiobooks, p.easy, "
         "(SELECT COUNT(*) FROM profile_favorites f WHERE f.profile_id=p.id) AS favs "
         "FROM profiles p ORDER BY p.id")]
 
@@ -776,8 +790,9 @@ def create_profile(p: ProfileIn) -> dict:
     with db.session() as conn:
         if conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] >= 12:
             raise HTTPException(400, "massimo 12 profili")
-        cur = conn.execute("INSERT INTO profiles(name, avatar, color, languages, audiobooks) VALUES(?,?,?,?,?)",
-                           (p.name, p.avatar, p.color, ",".join(p.languages) or None, p.audiobooks))
+        cur = conn.execute("INSERT INTO profiles(name, avatar, color, languages, audiobooks, easy) "
+                           "VALUES(?,?,?,?,?,?)",
+                           (p.name, p.avatar, p.color, ",".join(p.languages) or None, p.audiobooks, int(p.easy)))
         return {"id": cur.lastrowid}
 
 
@@ -785,9 +800,9 @@ def create_profile(p: ProfileIn) -> dict:
 def update_profile(pid: int, p: ProfileIn) -> dict:
     p = _check_profile(p)
     with db.session() as conn:
-        if not conn.execute("UPDATE profiles SET name=?, avatar=?, color=?, languages=?, audiobooks=? WHERE id=?",
-                            (p.name, p.avatar, p.color, ",".join(p.languages) or None, p.audiobooks,
-                             pid)).rowcount:
+        if not conn.execute("UPDATE profiles SET name=?, avatar=?, color=?, languages=?, audiobooks=?, easy=? "
+                            "WHERE id=?", (p.name, p.avatar, p.color, ",".join(p.languages) or None,
+                                           p.audiobooks, int(p.easy), pid)).rowcount:
             raise HTTPException(404)
     return {"ok": True}
 
@@ -798,6 +813,58 @@ def delete_profile(pid: int) -> dict:
         if conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] <= 1:
             raise HTTPException(400, "serve almeno un profilo")
         conn.execute("DELETE FROM profiles WHERE id=?", (pid,))
+    return {"ok": True}
+
+
+# --------------------------------------------------------------------------- NFC cards
+
+def _nfc_uid(uid: str) -> str:
+    u = re.sub(r"[^0-9a-f]", "", uid.lower())
+    if not 4 <= len(u) <= 32:
+        raise HTTPException(400, "codice tessera non valido")
+    return u
+
+
+class NfcTagIn(BaseModel):
+    album_id: str
+
+
+@app.get("/api/nfc/tags")
+def nfc_tags() -> dict:
+    with db.session() as conn:
+        rows = conn.execute(
+            "SELECT n.uid, n.target_kind, n.target_id, n.created_at, a.id AS album_id, a.kind, a.title, "
+            "a.has_cover, a.color, a.category FROM nfc_tags n LEFT JOIN albums a ON a.id=n.target_id "
+            "ORDER BY n.created_at DESC").fetchall()
+        items = []
+        for r in rows:
+            d = {"uid": r["uid"], "target_kind": r["target_kind"], "target_id": r["target_id"],
+                 "created_at": r["created_at"], "album": None}
+            if r["album_id"]:
+                d["album"] = {k: v for k, v in _album_dict(
+                    {"id": r["album_id"], "kind": r["kind"], "title": r["title"], "has_cover": r["has_cover"],
+                     "color": r["color"], "category": r["category"]}).items()
+                    if k in ("id", "kind", "title", "cover", "color", "category")}
+            items.append(d)
+        return {"items": items}
+
+
+@app.put("/api/nfc/tags/{uid}")
+def pair_nfc_tag(uid: str, body: NfcTagIn) -> dict:
+    uid = _nfc_uid(uid)
+    with db.session() as conn:
+        if not conn.execute("SELECT 1 FROM albums WHERE id=?", (body.album_id,)).fetchone():
+            raise HTTPException(404, "album non trovato")
+        conn.execute("INSERT INTO nfc_tags(uid, target_kind, target_id) VALUES(?, 'album', ?) "
+                     "ON CONFLICT(uid) DO UPDATE SET target_kind='album', target_id=excluded.target_id, "
+                     "created_at=datetime('now')", (uid, body.album_id))
+    return {"ok": True, "uid": uid}
+
+
+@app.delete("/api/nfc/tags/{uid}")
+def unpair_nfc_tag(uid: str) -> dict:
+    with db.session() as conn:
+        conn.execute("DELETE FROM nfc_tags WHERE uid=?", (_nfc_uid(uid),))
     return {"ok": True}
 
 

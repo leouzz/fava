@@ -133,6 +133,8 @@ ADMIN_RULES = (
     ("POST", "/api/profiles"),
     ("PUT", "/api/profiles/"),
     ("DELETE", "/api/profiles/"),
+    ("PUT", "/api/nfc/"),
+    ("DELETE", "/api/nfc/"),
 )
 
 
