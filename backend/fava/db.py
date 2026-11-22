@@ -11,11 +11,13 @@ SCHEMA = """
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS albums (
-    id            TEXT PRIMARY KEY,          -- 4-digit figure id, e.g. 0010
+    id            TEXT PRIMARY KEY,          -- 4-digit figure id (0010) or audiobook id (ab + 10 hex)
+    kind          TEXT NOT NULL DEFAULT 'faba',  -- faba | audiobook
+    audience      TEXT,                      -- audiobooks: kids | adults | NULL (unknown)
     title         TEXT NOT NULL,
     title_source  TEXT,
     subtitle      TEXT,
-    category      TEXT,                      -- stories | music | rhymes | other
+    category      TEXT,                      -- stories | music | rhymes | learning | other | audiobook
     category_source TEXT,
     language      TEXT,
     series        TEXT,
@@ -32,6 +34,7 @@ CREATE TABLE IF NOT EXISTS albums (
     color         TEXT,
     credits       TEXT,                      -- JSON {role: [names]}
     has_lyrics    INTEGER DEFAULT 0,
+    online_fields TEXT,                      -- audiobooks: JSON list of fields filled from the web
     sources       TEXT,                      -- JSON list: mki, mp3, pdf
     status        TEXT,                      -- ok | warning | error
     added_at      TEXT DEFAULT (datetime('now'))
@@ -46,12 +49,13 @@ CREATE TABLE IF NOT EXISTS tracks (
     duration      REAL DEFAULT 0,
     bitrate       INTEGER,
     size          INTEGER,
-    source_kind   TEXT NOT NULL,             -- mki | mp3
+    source_kind   TEXT NOT NULL,             -- mki | mp3 | m4b | m4a
     source_path   TEXT NOT NULL,
     alt_path      TEXT,                      -- the other copy, if any
     is_extra      INTEGER DEFAULT 0,         -- Faba intro / outro jingle
     lyrics        TEXT,
     valid         INTEGER DEFAULT 1,
+    chapters      TEXT,                      -- audiobooks: JSON [{start, title}] inside this file
     UNIQUE(album_id, idx)
 );
 
@@ -99,7 +103,8 @@ CREATE TABLE IF NOT EXISTS cover_candidates (
     product_name  TEXT,
     image         TEXT NOT NULL,             -- file name in data/catalog/img
     score         REAL,
-    status        TEXT NOT NULL,             -- auto | pending | accepted | rejected
+    status        TEXT NOT NULL,             -- auto | pending | accepted | rejected | option
+    data          TEXT,                      -- audiobooks: JSON details of the match (bookinfo.Result)
     created_at    TEXT DEFAULT (datetime('now')),
     UNIQUE(album_id, product_url)
 );
@@ -108,6 +113,12 @@ CREATE TABLE IF NOT EXISTS file_cache (
     path   TEXT PRIMARY KEY,
     stamp  TEXT NOT NULL,                    -- size:mtime
     data   TEXT NOT NULL                     -- JSON
+);
+
+-- choices made from the UI that must survive a re-import
+CREATE TABLE IF NOT EXISTS album_overrides (
+    album_id  TEXT PRIMARY KEY,
+    audience  TEXT                           -- kids | adults
 );
 
 CREATE TABLE IF NOT EXISTS meta (
@@ -134,6 +145,7 @@ CREATE TABLE IF NOT EXISTS u.profiles (
     avatar      TEXT NOT NULL DEFAULT 'face:bear',   -- face:<name> | figure:<album id>
     color       TEXT NOT NULL DEFAULT '#ff6b5e',
     languages   TEXT,                                -- "it,fr" (NULL = all)
+    audiobooks  TEXT NOT NULL DEFAULT 'all',             -- all | kids | none
     created_at  TEXT DEFAULT (datetime('now'))
 );
 
@@ -143,6 +155,18 @@ CREATE TABLE IF NOT EXISTS u.profile_favorites (
     added_at    TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (profile_id, album_id)
 );
+
+CREATE TABLE IF NOT EXISTS u.profile_bookmarks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    album_id    TEXT NOT NULL,
+    track_idx   INTEGER NOT NULL,                    -- tracks.idx (stable across imports)
+    position    REAL NOT NULL,
+    note        TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS u.bookmarks_album ON profile_bookmarks(profile_id, album_id);
 
 CREATE TABLE IF NOT EXISTS u.profile_progress (
     profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -155,9 +179,14 @@ CREATE TABLE IF NOT EXISTS u.profile_progress (
 """
 
 MIGRATIONS = {"cover_source": "TEXT", "duplicate_of": "TEXT", "description": "TEXT", "age": "TEXT",
-              "contents": "TEXT", "product_url": "TEXT"}
+              "contents": "TEXT", "product_url": "TEXT", "kind": "TEXT NOT NULL DEFAULT 'faba'",
+              "audience": "TEXT", "online_fields": "TEXT"}
 
-PROFILE_MIGRATIONS = {"languages": "TEXT"}
+CANDIDATE_MIGRATIONS = {"data": "TEXT"}
+
+TRACK_MIGRATIONS = {"chapters": "TEXT"}
+
+PROFILE_MIGRATIONS = {"languages": "TEXT", "audiobooks": "TEXT NOT NULL DEFAULT 'all'"}
 
 _lock = threading.Lock()
 
@@ -177,11 +206,14 @@ def init() -> None:
         conn.execute("PRAGMA u.journal_mode=WAL")
         conn.executescript(USER_SCHEMA)
         # lightweight migrations for databases created by older versions
-        for schema, table, cols_ddl in (("main", "albums", MIGRATIONS), ("u", "profiles", PROFILE_MIGRATIONS)):
+        for schema, table, cols_ddl in (("main", "albums", MIGRATIONS), ("main", "tracks", TRACK_MIGRATIONS),
+                                        ("main", "cover_candidates", CANDIDATE_MIGRATIONS),
+                                        ("u", "profiles", PROFILE_MIGRATIONS)):
             cols = {r[1] for r in conn.execute(f"PRAGMA {schema}.table_info({table})")}
             for col, ddl in cols_ddl.items():
                 if col not in cols:
                     conn.execute(f"ALTER TABLE {schema}.{table} ADD COLUMN {col} {ddl}")
+        conn.execute("CREATE INDEX IF NOT EXISTS albums_kind ON albums(kind)")
         # profiles used to live in fava.db: move them to user.db once
         main_tables = {r[0] for r in conn.execute("SELECT name FROM main.sqlite_master WHERE type='table'")}
         if "profiles" in main_tables:

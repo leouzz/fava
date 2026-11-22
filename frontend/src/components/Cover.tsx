@@ -2,17 +2,26 @@ import { useState } from "react";
 import { CATEGORY, albumColor, cn, hashHue } from "@/lib/utils";
 
 interface Props {
-  album: { id: string; title: string; cover: string | null; color?: string | null; category?: string };
+  album: { id: string; title: string; cover: string | null; color?: string | null; category?: string; kind?: string };
   className?: string;
   rounded?: string;
   showTitle?: boolean;
 }
 
-/** Album artwork: the Faba figure on a coloured backdrop, or a generated tile. */
+/** Album artwork: the Faba figure on a coloured backdrop, a book cover, or a generated tile. */
 export function Cover({ album, className, rounded = "rounded-xl", showTitle = true }: Props) {
   const [failed, setFailed] = useState(false);
   const color = albumColor(album);
-  const cat = CATEGORY[album.category || "other"] ?? CATEGORY.other;
+  const book = album.kind === "audiobook";
+  const cat = CATEGORY[book ? "audiobook" : album.category || "other"] ?? CATEGORY.other;
+
+  if (album.cover && !failed && book) {
+    return (
+      <div className={cn("relative aspect-square overflow-hidden bg-neutral-900", rounded, className)}>
+        <img src={album.cover} alt="" loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover" />
+      </div>
+    );
+  }
 
   if (album.cover && !failed) {
     return (

@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { Home, Library, Search, Settings2 } from "lucide-react";
+import { Headphones, Home, Library, Search, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useActiveProfile } from "./ProfilePicker";
 import { Avatar } from "./Avatar";
@@ -9,12 +9,23 @@ const items = [
   { to: "/", icon: Home, label: "Home", end: true },
   { to: "/search", icon: Search, label: "Cerca" },
   { to: "/library", icon: Library, label: "Libreria" },
+  { to: "/audiobooks", icon: Headphones, label: "Audiolibri" },
   { to: "/settings", icon: Settings2, label: "Gestione" },
 ];
 
+/** Navigation entries for the active profile (no "Audiolibri" when they are hidden to it). */
+function useItems() {
+  const p = useActiveProfile();
+  return p?.audiobooks === "none" ? items.filter((i) => i.to !== "/audiobooks") : items;
+}
+
 export function BottomNav() {
+  const items = useItems();
   return (
-    <nav className="grid grid-cols-4 bg-gradient-to-t from-black via-black/95 to-black/80 pb-safe backdrop-blur-md">
+    <nav
+      className="grid bg-gradient-to-t from-black via-black/95 to-black/80 pb-safe backdrop-blur-md"
+      style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}
+    >
       {items.map(({ to, icon: Icon, label, end }) => (
         <NavLink
           key={to}
@@ -41,6 +52,7 @@ export function BottomNav() {
 
 /** Desktop sidebar (≥ md). */
 export function SideNav() {
+  const items = useItems();
   return (
     <aside className="hidden w-60 shrink-0 flex-col gap-1 border-r border-white/5 bg-black p-3 md:flex">
       <div className="mb-4 flex items-center gap-2 px-3 pt-2">

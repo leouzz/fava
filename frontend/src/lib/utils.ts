@@ -26,7 +26,19 @@ export const CATEGORY: Record<string, { label: string; emoji: string; hue: numbe
   rhymes: { label: "Filastrocche", emoji: "🌙", hue: 215 },
   learning: { label: "Imparare", emoji: "🧩", hue: 150 },
   other: { label: "Altro", emoji: "✨", hue: 35 },
+  audiobook: { label: "Audiolibro", emoji: "🎧", hue: 20 },
 };
+
+export const AUDIENCE: Record<string, { label: string; emoji: string }> = {
+  kids: { label: "Bambini", emoji: "🧸" },
+  adults: { label: "Adulti", emoji: "📚" },
+};
+
+/** Time left in a book, e.g. "3 h 12 min". */
+export function fmtLeft(sec: number): string {
+  if (sec < 60) return "< 1 min";
+  return fmtDuration(sec);
+}
 
 export const LANGUAGE: Record<string, { label: string; flag: string }> = {
   it: { label: "Italiano", flag: "🇮🇹" },

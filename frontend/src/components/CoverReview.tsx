@@ -29,7 +29,8 @@ export function CoverReview() {
     <div className="rounded-2xl bg-card p-4">
       <h2 className="text-lg font-black">Copertine trovate online</h2>
       <p className="mt-0.5 text-xs text-muted-foreground">
-        Dal catalogo ufficiale e dai rivenditori, per gli album senza foto nel libretto.
+        Figure Faba (catalogo ufficiale e rivenditori) e audiolibri (Apple Books, Open Library). Per gli audiolibri, confermare
+        applica anche descrizione e autore quando mancano.
       </p>
 
       {pending.length > 0 && (
@@ -100,7 +101,21 @@ function Card({
   return (
     <div className={cn("flex flex-col rounded-xl bg-black/30 p-2 transition-opacity", busy && "opacity-40")}>
       <div className="relative aspect-square overflow-hidden rounded-lg bg-gradient-to-br from-neutral-600 to-neutral-800">
-        <img src={c.image_url} alt="" loading="lazy" className="absolute inset-[8%] h-[84%] w-[84%] object-contain" />
+        {c.image_url ? (
+          <img
+            src={c.image_url}
+            alt=""
+            loading="lazy"
+            className={cn(
+              "absolute",
+              c.album_id.startsWith("ab") ? "inset-0 h-full w-full object-cover" : "inset-[8%] h-[84%] w-[84%] object-contain",
+            )}
+          />
+        ) : (
+          <span className="absolute inset-0 flex items-center justify-center p-2 text-center text-[11px] text-white/60">
+            Solo descrizione, nessuna copertina
+          </span>
+        )}
       </div>
       <Link to={`/album/${c.album_id}`} className={cn("mt-2 line-clamp-2 font-bold leading-tight", compact ? "text-[11px]" : "text-sm")}>
         {c.album_title}

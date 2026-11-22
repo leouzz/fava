@@ -78,7 +78,7 @@ async function streamFromCache(req, path) {
   const blob = await hit.blob();
   const size = blob.size;
   const range = req.headers.get("range");
-  const headers = { "Content-Type": "audio/mpeg", "Accept-Ranges": "bytes" };
+  const headers = { "Content-Type": hit.headers.get("Content-Type") || "audio/mpeg", "Accept-Ranges": "bytes" };
   if (!range) {
     return new Response(blob, { status: 200, headers: { ...headers, "Content-Length": String(size) } });
   }

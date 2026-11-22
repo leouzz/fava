@@ -3,7 +3,18 @@
 import { api, type Album, type Track } from "@/lib/api";
 import { absUrl } from "@/lib/utils";
 import { castLoad, castReady, castSeek, castToggle, initCast, requestCast, setPublicBase, stopCast } from "./cast";
-import { current, makeOrder, toQueue, usePlayer, type QueueItem } from "./store";
+import {
+  bookRate,
+  chapterBounds,
+  chapterIndex,
+  current,
+  fabaRate,
+  makeOrder,
+  saveBookRate,
+  toQueue,
+  usePlayer,
+  type QueueItem,
+} from "./store";
 
 const audio = new Audio();
 audio.preload = "auto";
@@ -19,6 +30,7 @@ audio.addEventListener("timeupdate", () => {
   if (get().casting) return;
   set({ position: audio.currentTime });
   checkSleep();
+  checkStopAt(audio.currentTime);
   const now = Date.now();
   if (now - lastSaved > 10_000) {
     lastSaved = now;
@@ -45,12 +57,23 @@ function saveProgress() {
   if (it) api.progress(it.albumId, it.trackId, get().position);
 }
 
+const isBook = (it: QueueItem | null = current()) => it?.kind === "audiobook";
+
+/** "End of chapter" sleep timer for audiobooks. */
+function checkStopAt(pos: number) {
+  const { sleepStopAt } = get();
+  if (sleepStopAt != null && pos >= sleepStopAt - 0.3) {
+    set({ sleepStopAt: null, sleepEndOfTrack: false });
+    player.pause();
+  }
+}
+
 // --------------------------------------------------------------------------- loading
 function load(autoplay: boolean, startAt = 0) {
   const it = current();
   if (!it) return;
-  set({ position: startAt, duration: it.duration, error: null, buffering: autoplay });
-  updateMediaSession(it);
+  set({ position: startAt, duration: it.duration, error: null, buffering: autoplay, sleepStopAt: null });
+  updateMediaSession(it, startAt);
   if (get().casting) {
     audio.pause();
     castLoad(it, startAt, autoplay);
@@ -89,8 +112,10 @@ export const player = {
       const nxt = queue.findIndex((q) => !q.isExtra);
       if (nxt >= 0) first = nxt;
     }
-    const order = makeOrder(queue.length, get().shuffle, first);
-    set({ queue, order, pos: order.indexOf(first) });
+    const book = album.kind === "audiobook";
+    const order = makeOrder(queue.length, !book && get().shuffle, first);
+    const rate = book ? (bookRate(album.id) ?? 1) : fabaRate();
+    set({ queue, order, pos: order.indexOf(first), rate });
     load(true, startAt);
   },
 
@@ -101,11 +126,11 @@ export const player = {
     player.playAlbum(album, tracks, Math.max(0, tracks.indexOf(pick)));
   },
 
-  playAt(queueIndex: number) {
+  playAt(queueIndex: number, startAt = 0) {
     const p = get().order.indexOf(queueIndex);
     if (p < 0) return;
     set({ pos: p });
-    load(true);
+    load(true, startAt);
   },
 
   toggle() {
@@ -124,10 +149,22 @@ export const player = {
   },
 
   next(auto = false) {
-    const { order, queue, pos, repeat } = get();
+    const { order, queue, pos, repeat, position } = get();
     if (!order.length) return;
+    const book = isBook();
+    if (book && !auto) {
+      // audiobooks: next chapter inside the file first
+      const it = current()!;
+      const i = chapterIndex(it, position);
+      if (i >= 0 && i < it.chapters.length - 1) return player.seek(it.chapters[i + 1].start);
+    }
     let p = firstPlayable(order, queue, pos + 1, 1);
     if (p < 0) {
+      if (book) {
+        // end of the book: keep the position at the end, so it counts as finished
+        if (auto) set({ playing: false });
+        return;
+      }
       if (repeat === "all" || !auto) p = firstPlayable(order, queue, 0, 1);
       if (p < 0 || (auto && repeat !== "all")) {
         set({ playing: false, position: 0 });
@@ -141,6 +178,18 @@ export const player = {
 
   prev() {
     const { order, queue, pos, position } = get();
+    if (isBook()) {
+      const it = current()!;
+      const b = chapterBounds(it, position);
+      if (position - b.start > 4) return player.seek(b.start);
+      if (b.i > 0) return player.seek(it.chapters[b.i - 1].start);
+      const p = pos - 1;
+      if (p < 0) return player.seek(0);
+      const prevItem = queue[order[p]];
+      set({ pos: p });
+      load(true, prevItem.chapters.length ? prevItem.chapters[prevItem.chapters.length - 1].start : 0);
+      return;
+    }
     if (position > 4) return player.seek(0);
     const p = firstPlayable(order, queue, pos - 1, -1);
     if (p < 0) return player.seek(0);
@@ -163,6 +212,8 @@ export const player = {
   setRate(rate: number) {
     set({ rate });
     audio.playbackRate = rate;
+    const it = current();
+    if (it && isBook(it)) saveBookRate(it.albumId, rate);
   },
 
   toggleShuffle() {
@@ -180,9 +231,13 @@ export const player = {
   setSleep(minutes: number | "track" | null) {
     if (fadeTimer) window.clearInterval(fadeTimer);
     audio.volume = 1;
-    if (minutes === null) set({ sleepAt: null, sleepEndOfTrack: false });
-    else if (minutes === "track") set({ sleepAt: null, sleepEndOfTrack: true });
-    else set({ sleepAt: Date.now() + minutes * 60_000, sleepEndOfTrack: false });
+    if (minutes === null) set({ sleepAt: null, sleepEndOfTrack: false, sleepStopAt: null });
+    else if (minutes === "track") {
+      // audiobooks with chapters: stop at the end of the current chapter
+      const it = current();
+      const b = it && it.chapters.length ? chapterBounds(it, get().position) : null;
+      set({ sleepAt: null, sleepEndOfTrack: true, sleepStopAt: b && b.end < it!.duration - 1 ? b.end : null });
+    } else set({ sleepAt: Date.now() + minutes * 60_000, sleepEndOfTrack: false, sleepStopAt: null });
   },
 
   cast() {
@@ -203,7 +258,7 @@ function onEnded() {
     set({ sleepEndOfTrack: false, playing: false });
     return;
   }
-  if (s.repeat === "one") {
+  if (s.repeat === "one" && !isBook()) {
     load(true);
     return;
   }
@@ -236,6 +291,7 @@ window.setInterval(() => {
     player.pause();
     set({ sleepAt: null });
   }
+  if (s.casting && s.playing) checkStopAt(s.position);
   if (s.casting && s.playing && Date.now() - lastSaved > 10_000) {
     lastSaved = Date.now();
     saveProgress();
@@ -243,11 +299,15 @@ window.setInterval(() => {
 }, 1000);
 
 // --------------------------------------------------------------------------- media session
-function updateMediaSession(it: QueueItem) {
+let sessionKey = "";
+
+function updateMediaSession(it: QueueItem, pos = 0) {
   if (!("mediaSession" in navigator)) return;
+  const ch = isBook(it) && it.chapters.length ? chapterBounds(it, pos) : null;
+  sessionKey = `${it.trackId}:${ch?.i ?? -1}`;
   navigator.mediaSession.metadata = new MediaMetadata({
-    title: it.title,
-    artist: it.albumTitle,
+    title: ch ? ch.title : it.title,
+    artist: isBook(it) ? (it.author ?? it.albumTitle) : it.albumTitle,
     album: it.albumTitle,
     artwork: it.cover ? [{ src: absUrl(it.cover), sizes: "512x512", type: "image/png" }] : [],
   });
@@ -268,6 +328,10 @@ if ("mediaSession" in navigator) {
   }
   usePlayer.subscribe((s) => {
     ms.playbackState = s.playing ? "playing" : current(s) ? "paused" : "none";
+    const it = current(s);
+    // the lock screen shows the chapter being played
+    if (it && isBook(it) && it.chapters.length && `${it.trackId}:${chapterIndex(it, s.position)}` !== sessionKey)
+      updateMediaSession(it, s.position);
     try {
       if (s.duration && isFinite(s.duration))
         ms.setPositionState({ duration: s.duration, position: Math.min(s.position, s.duration), playbackRate: s.rate });

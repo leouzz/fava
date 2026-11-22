@@ -17,11 +17,14 @@ services:
     volumes:
       - ${FAVA_ASSET_PATH:-./asset}:/assets:ro   # backups (MKI / MP3 / PDF), read-only
       - ${FAVA_DATA_PATH:-./data}:/data          # database, covers, cache, uploads
+      # an existing audiobook library (also set FAVA_AUDIOBOOK_DIR=/audiobooks in .env):
+      # - /path/to/audiobooks:/audiobooks:ro
     environment:
       FAVA_PASSWORD: ${FAVA_PASSWORD:-}
       FAVA_ADMIN_PASSWORD: ${FAVA_ADMIN_PASSWORD:-}
       FAVA_PUBLIC_URL: ${FAVA_PUBLIC_URL:-}
       FAVA_IMPORT_ON_START: ${FAVA_IMPORT_ON_START:-auto}
+      FAVA_AUDIOBOOK_DIR: ${FAVA_AUDIOBOOK_DIR:-}
       FAVA_PREFER: ${FAVA_PREFER:-mki}
       FAVA_ONLINE_COVERS: ${FAVA_ONLINE_COVERS:-1}
       FAVA_ONLINE_DETAILS: ${FAVA_ONLINE_DETAILS:-1}

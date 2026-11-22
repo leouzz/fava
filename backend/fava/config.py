@@ -27,6 +27,9 @@ class Settings:
     registry_url: str = field(default_factory=lambda: _env(
         "FAVA_REGISTRY_URL",
         "https://raw.githubusercontent.com/wansors/myfaba-hacks/main/TAGS.md"))
+    # Optional extra audiobook library (besides <asset>/audiobooks and the uploads).
+    audiobook_dir: Path | None = field(default_factory=lambda: (
+        Path(_env("FAVA_AUDIOBOOK_DIR", "")).resolve() if _env("FAVA_AUDIOBOOK_DIR", "") else None))
     import_on_start: bool = field(default_factory=lambda: _env("FAVA_IMPORT_ON_START", "auto") != "never")
     import_always: bool = field(default_factory=lambda: _env("FAVA_IMPORT_ON_START", "auto") == "always")
     extract_covers: bool = field(default_factory=lambda: _env("FAVA_COVERS", "1") != "0")

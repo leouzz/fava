@@ -118,12 +118,12 @@ export function castLoad(item: QueueItem, startAt: number, autoplay: boolean) {
   const session = window.cast?.framework.CastContext.getInstance().getCurrentSession();
   if (!session) return;
   const url = withMediaKey(absUrl(`/api/stream/${item.trackId}`, publicBase));
-  const info = new chrome.cast.media.MediaInfo(url, "audio/mpeg");
+  const info = new chrome.cast.media.MediaInfo(url, item.mime);
   info.streamType = chrome.cast.media.StreamType.BUFFERED;
   const md = new chrome.cast.media.MusicTrackMediaMetadata();
   md.title = item.title;
   md.albumName = item.albumTitle;
-  md.artist = item.albumTitle;
+  md.artist = item.author ?? item.albumTitle;
   md.trackNumber = item.idx;
   if (item.cover) md.images = [new chrome.cast.Image(withMediaKey(absUrl(item.cover, publicBase)))];
   info.metadata = md;

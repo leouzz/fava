@@ -25,6 +25,7 @@ import { player } from "@/player/engine";
 import { DownloadButton } from "@/components/OfflineUi";
 import { isAdmin, useAuth } from "@/lib/auth";
 import { current, usePlayer } from "@/player/store";
+import { AudiobookView } from "./Audiobook";
 
 const ROLE: Record<string, string> = {
   text: "Testi",
@@ -46,6 +47,7 @@ export function AlbumPage() {
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
+  if (album.kind === "audiobook") return <AudiobookView album={album} />;
   const color = albumColor(album);
   const cat = CATEGORY[album.category] ?? CATEGORY.other;
   const lang = album.language ? LANGUAGE[album.language] : null;
@@ -310,7 +312,7 @@ function Details({ album }: { album: AlbumDetail }) {
   );
 }
 
-function AdminCover({ album }: { album: AlbumDetail }) {
+export function AdminCover({ album }: { album: AlbumDetail }) {
   const qc = useQueryClient();
   const admin = isAdmin(useAuth((s) => s.status));
   const input = useRef<HTMLInputElement>(null);

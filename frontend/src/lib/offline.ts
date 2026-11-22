@@ -74,8 +74,9 @@ export async function downloadAlbum(album: AlbumDetail) {
       if (!res) {
         const net = await fetch(url, { credentials: "same-origin" });
         if (!net.ok) throw new Error(`traccia ${tracks[i].idx}: ${net.status}`);
+        const type = net.headers.get("Content-Type") || "audio/mpeg";
         const blob = await net.blob();
-        await audio.put(url, new Response(blob, { headers: { "Content-Type": "audio/mpeg" } }));
+        await audio.put(url, new Response(blob, { headers: { "Content-Type": type } }));
         bytes += blob.size;
       } else {
         bytes += (await res.blob()).size;

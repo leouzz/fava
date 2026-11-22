@@ -51,6 +51,12 @@ and Chromecast.
 - **Chromecast** through the Google Cast Default Media Receiver, with the Remote
   Playback API as a fallback.
 - An option to skip the short Faba intro and outro jingles.
+- **Audiobooks**, in their own section. Drop in `.m4b` files (or folders of
+  `.mp3` / `.m4a`), or upload them from the browser. Chapters, author, narrator
+  and cover are read from the files. Each book remembers its own speed (up to 2×).
+  The player moves chapter by chapter, skips ±30 s, saves bookmarks with notes and
+  has a sleep timer at the end of the chapter. Books can be marked as for kids or adults, and each profile
+  sees all of them, only the kids' ones, or none (see [Audiobooks](#audiobooks)).
 
 ## Install on a NAS or home server (prebuilt image)
 
@@ -118,6 +124,66 @@ their naming patterns.
 - `CPnn` files are the tracks, in playback order.
 - In the MP3 folders, files are paired with the `CPnn` files **by position**:
   sorted file *n* corresponds to `CP{n}`.
+
+## Audiobooks
+
+Audiobooks live in their own section (**Audiolibri**), separate from the Faba
+library. FAVA reads them from:
+
+- `asset/audiobooks/` (or `asset/audiolibri/`), at any depth;
+- the folder set in `FAVA_AUDIOBOOK_DIR`, if you already have a library elsewhere;
+- **Gestione → Carica audiolibri**, which uploads `.m4b` / `.m4a` / `.mp3` files,
+  folders or a ZIP to `data/audiobooks/`.
+
+```
+asset/audiobooks/
+├── bambini/                          # "bambini", "kids", "ragazzi"… → for kids
+│   └── Il piccolo principe.m4b       # one file = one book, chapters inside
+├── adulti/                           # "adulti", "adults" → for adults
+│   └── Autore - Titolo/              # a folder of MP3 / M4A = one book,
+│       ├── 01.mp3                    # one file per chapter
+│       ├── 02.mp3
+│       └── cover.jpg                 # used when the files have no cover
+└── Altro libro.m4b                   # no hint: the audience is left unset
+```
+
+- **Grouping.** Each `.m4b` file is a book. The exception is a book split into
+  parts: several files in the same folder with the same album tag become one
+  book. Within a folder, `.mp3` / `.m4a` files form one book, ordered by track
+  number or by name.
+- **Metadata.** The title, author (artist / album artist), narrator (composer, or a
+  `narrator` tag), description, genre and cover come from the tags. When the tags
+  are missing, FAVA uses file and folder names; for example, `Author - Title`
+  gives both the author and the title.
+- **Chapters.** FAVA reads the QuickTime chapter track of M4B files, falling back
+  to the Nero `chpl` atom, and the ID3 `CHAP` frames of MP3s. The player's seek
+  bar covers the current chapter, and ⏮ / ⏭ jump between chapters.
+- **Kids or adults.** The audience comes from the folder name or a children's
+  genre tag. Parents can change it on the book page ("Adatto a"), and their choice
+  survives re-imports. In the profile editor, **Audiolibri** can be set to *Tutti*,
+  *Solo per bambini* (books marked as for kids only) or *Nascosti* (no section at
+  all).
+- **Progress.** Progress is saved per profile. A book counts as finished when you
+  reach the end, and finished books leave "Continua ad ascoltare". The book page
+  has "Segna come finito" and "Segna come da iniziare". Each book keeps its own
+  playback speed on the device.
+- **Online details.** For books missing a cover, description or author, the import
+  searches Apple Books (the public iTunes Search API) and Open Library. Only the
+  title and author are sent. A near-identical title *and* author is applied
+  automatically. Less certain matches wait in **Gestione → Copertine trovate
+  online**, where you confirm or discard them, and "Non è lei" undoes an automatic
+  one. Online data only fills what the files lack: tags always win. A children's
+  genre (e.g. "Bambini e ragazzi") marks the book as for kids, unless you already
+  set it. On the book page, **Cerca online** lets you pick the right result
+  yourself, or search with your own words. **Togli dati online** removes what was
+  filled and stops looking for that book. Decisions survive re-imports, and
+  answers and images are cached in `data/catalog` for 30 days. Turn it off with
+  `FAVA_ONLINE_COVERS=0` (covers) and `FAVA_ONLINE_DETAILS=0` (descriptions,
+  authors).
+- **Bookmarks.** Tap the bookmark button in the full-screen player to save the point
+  being played. Bookmarks are listed with a note, which you can edit, both in the
+  player (Capitoli → Segnalibri) and on the book page. They belong to a profile and
+  survive re-imports.
 
 ## Metadata sources
 
@@ -229,13 +295,14 @@ storage used.
 | `FAVA_PREFER`          | `mki`              | Stream the original MKI files or the MP3 copies |
 | `FAVA_REGISTRY_URL`    | myfaba-hacks `TAGS.md` | Empty string disables the registry |
 | `FAVA_COVERS`          | `1`                | `0` skips cover extraction from booklets |
-| `FAVA_ONLINE_COVERS`   | `1`                | `0` disables the online catalogue lookup |
+| `FAVA_ONLINE_COVERS`   | `1`                | `0` disables the online catalogue lookup (Faba covers, audiobook covers) |
 | `FAVA_CATALOG_STORES`  | myfaba `.it,.es,.fr` | Comma-separated store base URLs |
 | `FAVA_RETAILER_SITEMAPS` | italiano-bello.com | Comma-separated retailer sitemap URLs; empty disables |
 | `FAVA_PASSWORD`        | *(empty)*          | Family password (empty = open access) |
 | `FAVA_ADMIN_PASSWORD`  | *(empty)*          | Parents' password for management actions |
 | `FAVA_SECRET`          | *(generated)*      | Cookie/media-key signing secret (`data/secret.key`) |
-| `FAVA_ONLINE_DETAILS`  | `1`                | `0` disables descriptions / track titles from product pages |
+| `FAVA_ONLINE_DETAILS`  | `1`                | `0` disables descriptions / track titles from product pages, audiobook descriptions and authors |
+| `FAVA_AUDIOBOOK_DIR`   | *(empty)*          | Extra audiobook folder, besides `asset/audiobooks` and the uploads |
 | `PORT`                 | `8080`             | HTTP port |
 
 ## Development
@@ -262,7 +329,7 @@ Query + zustand on the frontend.
 
 | Endpoint | Purpose |
 | -------- | ------- |
-| `GET /api/albums?q=&category=&language=&series=&favorites=&lyrics=&sort=` | List and filter albums |
+| `GET /api/albums?q=&category=&language=&series=&favorites=&lyrics=&sort=&kind=&audience=` | List and filter albums (`kind=audiobook` for audiobooks, default `faba`) |
 | `GET /api/albums/{id}` | Album with tracks, booklets, issues and resume position |
 | `GET /api/search?q=` | Full-text search (albums, tracks, lyrics, credits) |
 | `GET /api/stream/{track_id}` | Audio stream with HTTP Range support |

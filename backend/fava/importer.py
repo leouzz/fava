@@ -6,6 +6,9 @@ Accepted inputs (anywhere below ``FAVA_ASSET_DIR``, any depth):
 * ``0010 - Title/NN - Track title.mp3``  already decoded copies (optional)
 * ``list.csv`` / ``list.txt``             ``id,title`` lines, UTF-8 or UTF-16
 * ``K10 - Title - Documento|Testi|Attivita.pdf``  official booklets (optional)
+
+Audiobooks (``audiobooks/`` or ``audiolibri/`` below the asset folder, uploads,
+``FAVA_AUDIOBOOK_DIR``) are imported too: see audiobooks.py.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import catalog, db, mki, pdfmeta, registry
+from . import audiobooks, bookinfo, catalog, db, mki, pdfmeta, registry
 from .config import settings
 
 log = logging.getLogger(__name__)
@@ -74,6 +77,10 @@ class ImportState:
 state = ImportState()
 _lock = threading.Lock()
 
+# old track id -> new track id after the last import: players still holding the old
+# ids keep streaming and saving their position (see main.resolve_track)
+track_remap: dict[int, int] = {}
+
 
 # --------------------------------------------------------------------------- scan
 
@@ -114,6 +121,8 @@ def scan(root: Path) -> dict[str, AlbumSrc]:
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         d = Path(dirpath)
+        if d == root:  # audiobooks have their own importer
+            dirnames[:] = [x for x in dirnames if x.lower() not in audiobooks.ROOT_DIR_NAMES]
         m = RE_MKI_DIR.match(d.name)
         if m:
             for f in filenames:
@@ -337,13 +346,13 @@ def _category_from_title(title: str) -> str | None:
     return None
 
 
-def _cover_color(png: bytes) -> str | None:
+def _cover_color(png: bytes, figure: bool = True) -> str | None:
     try:
         from PIL import Image
 
         img = Image.open(io.BytesIO(png)).convert("RGBA")
-        # ignore the red plastic base every Faba figure stands on
-        img = img.crop((0, 0, img.width, int(img.height * 0.78)))
+        if figure:  # ignore the red plastic base every Faba figure stands on
+            img = img.crop((0, 0, img.width, int(img.height * 0.78)))
         img.thumbnail((64, 64))
         px = [p for p in img.getdata() if p[3] > 200]
         if not px:
@@ -422,7 +431,7 @@ def _covers_phase(conn, st: ImportState, reg, srcs, issue) -> None:
     for row in conn.execute(
             "SELECT c.album_id, c.image, c.source, c.product_url FROM cover_candidates c "
             "JOIN albums a ON a.id=c.album_id "
-            "WHERE a.has_cover=0 AND c.status='accepted'").fetchall():  # automatic ones are re-found
+            "WHERE a.has_cover=0 AND c.status='accepted' AND a.kind='faba'").fetchall():  # automatic ones are re-found
         p = img_dir / row["image"]
         has = conn.execute("SELECT has_cover FROM albums WHERE id=?", (row["album_id"],)).fetchone()[0]
         if p.exists() and not has:
@@ -442,7 +451,7 @@ def _covers_phase(conn, st: ImportState, reg, srcs, issue) -> None:
                 srcs[fid].pdf_title if fid in srcs else None]
 
     # 3. official catalogue
-    todo = conn.execute("SELECT id, title, language, sku FROM albums WHERE has_cover=0 "
+    todo = conn.execute("SELECT id, title, language, sku FROM albums WHERE has_cover=0 AND kind='faba' "
                         "ORDER BY sku IS NULL, id").fetchall()  # SKU matches first
     if todo:
         st.phase, st.total, st.done = "covers", len(todo), 0
@@ -472,14 +481,15 @@ def _covers_phase(conn, st: ImportState, reg, srcs, issue) -> None:
         st.emit(f"Copertine dal catalogo ufficiale: {found}/{len(todo)}")
 
     # 4. retailers (retired figures)
-    todo = conn.execute("SELECT id, title, language, sku FROM albums WHERE has_cover=0 ORDER BY id").fetchall()
+    todo = conn.execute("SELECT id, title, language, sku FROM albums WHERE has_cover=0 AND kind='faba' "
+                        "ORDER BY id").fetchall()
     todo = [r for r in todo if r["id"] not in pending]
     if todo and settings.retailer_sitemaps:
         st.total, st.done = len(todo), 0
         st.emit(f"Cerco {len(todo)} copertine presso i rivenditori…")
         auto = sugg = 0
         try:
-            library = {r[0]: r[1] for r in conn.execute("SELECT id, title FROM albums")}
+            library = {r[0]: r[1] for r in conn.execute("SELECT id, title FROM albums WHERE kind='faba'")}
             rf = catalog.RetailerFinder(library)
             for row in todo:
                 st.done += 1
@@ -513,7 +523,7 @@ def _details_phase(conn, st: ImportState, reg, srcs, issue) -> None:
             conn.execute("DELETE FROM album_links WHERE album_id=? AND url=?", (fid, u))
 
     # 1. link albums that got their cover elsewhere (booklet, manual) to the catalogue
-    todo = conn.execute("SELECT id, title, language, sku FROM albums WHERE id NOT IN "
+    todo = conn.execute("SELECT id, title, language, sku FROM albums WHERE kind='faba' AND id NOT IN "
                         "(SELECT album_id FROM album_links) ORDER BY sku IS NULL, id").fetchall()
     if todo:
         st.phase, st.total, st.done = "details", len(todo), 0
@@ -596,6 +606,122 @@ def _details_phase(conn, st: ImportState, reg, srcs, issue) -> None:
     st.emit(f"Dettagli online: {sum(1 for _ in links)} album, {titled} titoli di traccia aggiunti")
 
 
+# --------------------------------------------------------------------------- audiobooks
+
+def _write_cover(data: bytes | None, target: Path) -> bool:
+    png = audiobooks.to_png(data) if data else None
+    if not png:
+        return False
+    target.write_bytes(png)
+    return True
+
+
+def _audiobooks_phase(conn, st: ImportState, existing: set, issue) -> int:
+    probes: dict[str, dict] = {}
+
+    def probe_cached(p: Path) -> dict:
+        k = str(p)
+        if k not in probes:
+            key = f"{p}#ab"
+            d = _cached_key(conn, key, p, lambda: audiobooks.probe(p))
+            if d.get("v") != audiobooks.PROBE_VERSION:
+                conn.execute("DELETE FROM file_cache WHERE path=?", (key,))
+                d = _cached_key(conn, key, p, lambda: audiobooks.probe(p))
+            probes[k] = d
+        return probes[k]
+
+    st.emit("Cerco audiolibri…")
+    books = audiobooks.scan(probe_cached)
+    if not books:
+        return 0
+    st.phase, st.total, st.done = "audiobooks", len(books), 0
+    st.emit(f"Audiolibri: {len(books)} trovati, lettura capitoli e copertine…")
+    overrides = {r[0]: r[1] for r in conn.execute("SELECT album_id, audience FROM album_overrides")}
+    manual_dir = settings.data_dir / "covers-manual"
+    for book in books:
+        st.done += 1
+        infos = [probe_cached(p) for p in book.files]
+        idx = list(range(len(book.files)))
+        if len(idx) > 1 and all(i.get("track") for i in infos):
+            idx.sort(key=lambda i: (infos[i].get("disc") or 0, infos[i]["track"]))
+        files, infos = [book.files[i] for i in idx], [infos[i] for i in idx]
+        meta = audiobooks.describe(book, infos)
+        lang = meta["language"] or _guess_lang([meta["title"], meta.get("description") or ""])
+        audience = overrides.get(book.id) or audiobooks.detect_audience(book, meta["genre"])
+
+        # cover: uploaded from the UI > embedded in the file > image in the folder
+        target = settings.covers_dir / f"{book.id}.png"
+        csrc = None
+        manual = manual_dir / f"{book.id}.png"
+        if manual.is_file():
+            target.write_bytes(manual.read_bytes())
+            csrc = "manual"
+        if not csrc:
+            src = next((p for p, i in zip(files, infos) if i.get("has_cover")), None)
+            if src:
+                ck = f"{src}#abcover:{book.id}"
+
+                def extract(src=src):
+                    return {"ok": _write_cover(audiobooks.embedded_cover(src), target)}
+                got = _cached_key(conn, ck, src, extract)
+                if got.get("ok") and not target.exists():
+                    conn.execute("DELETE FROM file_cache WHERE path=?", (ck,))
+                    got = _cached_key(conn, ck, src, extract)
+                csrc = "tag" if got.get("ok") else None
+        if not csrc:
+            fc = audiobooks.folder_cover(book.folder)
+            if fc and _write_cover(fc.read_bytes(), target):
+                csrc = "folder"
+        color = _cover_color(target.read_bytes(), figure=False) if csrc else None
+
+        single = len(files) == 1
+        tracks = []
+        for n, (p, info) in enumerate(zip(files, infos), start=1):
+            title, tsrc = audiobooks.track_title(p, info, meta["title"], single)
+            if not info.get("valid"):
+                issue(book.id, n, "error", "invalid_audio",
+                      f"«{p.name}» non riproducibile: {info.get('error') or 'durata nulla'}")
+            tracks.append((n, title, tsrc, info, p))
+        total = sum(t[3].get("duration") or 0 for t in tracks)
+        if single and not infos[0].get("chapters") and total > 3600:
+            issue(book.id, None, "info", "no_chapters", "Il file non contiene capitoli")
+
+        row = dict(id=book.id, kind="audiobook", audience=audience, title=meta["title"],
+                   title_source=meta["title_source"], subtitle=meta["author"],
+                   category="audiobook", category_source="audiobook", language=lang, series=None, sku=None,
+                   track_count=len(tracks), duration=round(total, 1),
+                   has_cover=int(bool(csrc)), cover_source=csrc, color=color,
+                   credits=audiobooks.credits(meta), has_lyrics=0,
+                   sources=json.dumps(sorted({p.suffix.lower()[1:] for p in files})),
+                   description=meta["description"], age=None, contents=None, product_url=None,
+                   duplicate_of=None, online_fields=None)
+        conn.execute(
+            f"INSERT INTO albums({', '.join(row)}) VALUES({', '.join('?' * len(row))}) "
+            f"ON CONFLICT(id) DO UPDATE SET {', '.join(f'{k}=excluded.{k}' for k in row if k != 'id')}",
+            tuple(row.values()))
+        existing.discard(book.id)
+
+        search_rows = [(book.id, None, "album", meta["title"])]
+        names = " ".join(x for x in (meta["author"], meta["narrator"]) if x)
+        if names:
+            search_rows.append((book.id, None, "credit", names))
+        if meta["description"]:
+            search_rows.append((book.id, None, "info", meta["description"]))
+        for n, title, tsrc, info, p in tracks:
+            chapters = info.get("chapters") or []
+            cur = conn.execute(
+                "INSERT INTO tracks(album_id, idx, title, title_source, duration, bitrate, size, "
+                "source_kind, source_path, is_extra, valid, chapters) VALUES(?,?,?,?,?,?,?,?,?,0,?,?)",
+                (book.id, n, title, tsrc, info.get("duration") or 0, info.get("bitrate"), info.get("size"),
+                 p.suffix.lower()[1:], str(p), int(bool(info.get("valid"))),
+                 json.dumps(chapters, ensure_ascii=False) if chapters else None))
+            if tsrc != "book" and not audiobooks.is_generic(title):
+                search_rows.append((book.id, cur.lastrowid, "track", title))
+        conn.executemany("INSERT INTO search(album_id, track_id, kind, text) VALUES(?,?,?,?)", search_rows)
+    st.emit(f"Audiolibri importati: {len(books)}")
+    return len(books)
+
+
 # --------------------------------------------------------------------------- import
 
 def run_import() -> None:
@@ -628,11 +754,11 @@ def _run() -> None:
     st.phase, st.done, st.total = "scan", 0, 0
     root = settings.asset_dir
     st.emit(f"Scansione di {root}")
-    if not root.exists():
+    if root.exists():
+        srcs = scan(root)
+    else:
         st.emit("Cartella asset non trovata")
-        st.phase = "error"
-        return
-    srcs = scan(root)
+        srcs = {}
     up = settings.data_dir / "uploads"
     if up.is_dir():
         for fid, a in scan(up).items():  # uploaded backups complete / extend the asset folder
@@ -689,6 +815,7 @@ def _run() -> None:
         conn.execute("DELETE FROM issues")
         conn.execute("DELETE FROM search")
         conn.execute("DELETE FROM documents")
+        old_tracks = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT id, album_id, idx FROM tracks")}
         conn.execute("DELETE FROM tracks")
         existing = {r["id"] for r in conn.execute("SELECT id FROM albums")}
 
@@ -990,11 +1117,20 @@ def _run() -> None:
                 conn.execute("INSERT INTO documents(album_id, kind, path, name) VALUES(?,?,?,?)",
                              (fid, kind, str(path), path.name))
 
+        # ---- audiobooks
+        n_books = _audiobooks_phase(conn, st, existing, issue)
+
         # ---- missing covers: manual files, reviewed candidates, catalogue, retailers
         _covers_phase(conn, st, reg, srcs, issue)
-        conn.execute("UPDATE albums SET description=NULL, age=NULL, contents=NULL, product_url=NULL")
+        conn.execute("UPDATE albums SET description=NULL, age=NULL, contents=NULL, product_url=NULL "
+                     "WHERE kind='faba'")
         if settings.online_details:
             _details_phase(conn, st, reg, srcs, issue)
+        if n_books and (settings.online_covers or settings.online_details):
+            try:
+                bookinfo.import_phase(conn, st, issue)
+            except Exception as e:  # network problems must not break the import
+                log.warning("audiobook details lookup failed: %s", e)
 
         # ---- same recording released with several figures (other-language editions)
         conn.execute("UPDATE albums SET duplicate_of=NULL")
@@ -1024,19 +1160,31 @@ def _run() -> None:
         conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('asset_dir', ?)", (str(root),))
 
         st.stats = {
-            "albums": len(srcs), "tracks_ok": n_ok, "tracks_bad": n_bad,
+            "albums": len(srcs), "audiobooks": n_books, "tracks_ok": n_ok, "tracks_bad": n_bad,
             "errors": sum(1 for i in issues if i[2] == "error"),
             "warnings": sum(1 for i in issues if i[2] == "warning"),
             "seconds": round(time.time() - st.started_at, 1),
         }
+    # resume points refer to track ids, which are new after every import
+    # (a separate transaction: user.db must not stay locked during the import)
+    with db.session() as conn:
+        new = {(r[1], r[2]): r[0] for r in conn.execute("SELECT id, album_id, idx FROM tracks")}
+        remap = {old: new[key] for old, key in old_tracks.items() if key in new and new[key] != old}
+        track_remap.clear()
+        track_remap.update(remap)
+        for profile, album, tid in conn.execute(
+                "SELECT profile_id, album_id, track_id FROM profile_progress").fetchall():
+            if tid in remap:
+                conn.execute("UPDATE profile_progress SET track_id=? WHERE profile_id=? AND album_id=?",
+                             (remap[tid], profile, album))
     # files of covers that no longer exist (after commit: readers saw the old catalogue until now)
     with db.session() as conn:
         for (fid,) in conn.execute("SELECT id FROM albums WHERE has_cover=0"):
             (settings.covers_dir / f"{fid}.png").unlink(missing_ok=True)
     st.phase = "done"
     st.done = st.total
-    st.emit(f"Import completato: {len(srcs)} album, {n_ok} tracce ok, {n_bad} non valide "
-            f"in {st.stats['seconds']}s")
+    st.emit(f"Import completato: {len(srcs)} album, {n_books} audiolibri, {n_ok} tracce ok, "
+            f"{n_bad} non valide in {st.stats['seconds']}s")
 
 
 if __name__ == "__main__":  # python -m fava.importer

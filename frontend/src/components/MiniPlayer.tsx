@@ -1,5 +1,5 @@
 import { Cast, Loader2, Pause, Play, SkipForward } from "lucide-react";
-import { current, usePlayer } from "@/player/store";
+import { chapterBounds, current, usePlayer } from "@/player/store";
 import { player } from "@/player/engine";
 import { Cover } from "./Cover";
 import { albumColor, cn } from "@/lib/utils";
@@ -13,7 +13,13 @@ export function MiniPlayer() {
   const casting = usePlayer((s) => s.casting);
   const castDevice = usePlayer((s) => s.castDevice);
   if (!item) return null;
-  const pct = duration ? Math.min(100, (position / duration) * 100) : 0;
+  const book = item.kind === "audiobook";
+  const ch = book && item.chapters.length ? chapterBounds(item, position) : null;
+  const pct = ch
+    ? Math.min(100, ((position - ch.start) / Math.max(1, ch.end - ch.start)) * 100)
+    : duration
+      ? Math.min(100, (position / duration) * 100)
+      : 0;
   const color = albumColor({ id: item.albumId, color: item.color });
 
   return (
@@ -28,18 +34,22 @@ export function MiniPlayer() {
       >
         <div className="w-10 shrink-0 [container-type:inline-size]">
           <Cover
-            album={{ id: item.albumId, title: item.albumTitle, cover: item.cover, color: item.color }}
+            album={{ id: item.albumId, title: item.albumTitle, cover: item.cover, color: item.color, kind: item.kind }}
             rounded="rounded-md"
             showTitle={false}
           />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold leading-tight">{item.title}</p>
+          <p className="truncate text-sm font-bold leading-tight">{ch ? ch.title : item.title}</p>
           <p className={cn("truncate text-xs", casting ? "text-emerald-300" : "text-white/70")}>
             {casting ? (
               <span className="inline-flex items-center gap-1">
                 <Cast className="h-3 w-3" /> {castDevice}
               </span>
+            ) : book && ch ? (
+              item.albumTitle
+            ) : book ? (
+              (item.author ?? item.albumTitle)
             ) : (
               item.albumTitle
             )}
@@ -62,7 +72,7 @@ export function MiniPlayer() {
           )}
         </button>
         <button
-          aria-label="Successiva"
+          aria-label={book ? "Capitolo successivo" : "Successiva"}
           onClick={(e) => {
             e.stopPropagation();
             player.next();

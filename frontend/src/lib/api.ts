@@ -8,10 +8,42 @@ export interface Profile {
   color: string;
   favorites: number;
   languages: string[];
+  audiobooks: AudiobookAccess;
+}
+
+/** Which audiobooks a profile sees. */
+export type AudiobookAccess = "all" | "kids" | "none";
+export type Audience = "kids" | "adults";
+
+export interface Progress {
+  track_id: number;
+  position: number;
+  idx?: number;
+  title?: string;
+  /** seconds listened in the whole album (previous tracks + position) */
+  listened?: number;
+}
+
+export interface Bookmark {
+  id: number;
+  album_id: string;
+  track_idx: number;
+  track_id: number;
+  position: number;
+  note: string | null;
+  created_at: string;
+}
+
+export interface Chapter {
+  start: number;
+  title: string;
 }
 
 export interface Album {
   id: string;
+  kind: "faba" | "audiobook";
+  /** audiobooks only */
+  audience: Audience | null;
   title: string;
   title_source: string;
   subtitle: string | null;
@@ -22,7 +54,7 @@ export interface Album {
   track_count: number;
   duration: number;
   has_cover: number;
-  cover_source: "booklet" | "catalog" | "retailer" | "manual" | null;
+  cover_source: "booklet" | "catalog" | "retailer" | "manual" | "tag" | "folder" | "apple" | "openlibrary" | null;
   cover: string | null;
   color: string | null;
   credits: Record<string, string[]>;
@@ -31,7 +63,7 @@ export interface Album {
   status: "ok" | "warning" | "error" | null;
   duplicate_of: string | null;
   favorite?: boolean;
-  progress?: { track_id: number; position: number; idx?: number; title?: string } | null;
+  progress?: Progress | null;
 }
 
 export interface Track {
@@ -41,10 +73,11 @@ export interface Track {
   title_source: string;
   duration: number;
   bitrate: number | null;
-  source_kind: "mki" | "mp3";
+  source_kind: "mki" | "mp3" | "m4b" | "m4a";
   is_extra: number;
   valid: number;
   has_lyrics: boolean;
+  chapters: Chapter[];
 }
 
 export interface Issue {
@@ -66,6 +99,8 @@ export interface AlbumDetail extends Album {
   age: string | null;
   contents: { name: string; items: string[] }[];
   product_url: string | null;
+  /** audiobooks: fields filled from the web (cover, description, author, audience) */
+  online_fields: string[] | null;
 }
 
 export interface Facet {
@@ -84,6 +119,7 @@ export interface Facets {
     last_import: string | null;
     favorites: number;
     duplicates: number;
+    audiobooks: number;
   };
 }
 
@@ -108,7 +144,23 @@ export interface CoverCandidate {
   product_name: string | null;
   score: number | null;
   status: "pending" | "auto";
-  image_url: string;
+  image_url: string | null;
+}
+
+/** A result of the manual online search for an audiobook. */
+export interface BookResult {
+  id: number;
+  source: "apple" | "openlibrary";
+  source_name: string;
+  title: string;
+  author: string | null;
+  year: string | null;
+  genre: string | null;
+  thumb: string | null;
+  url: string;
+  score: number;
+  status: "auto" | "pending" | "accepted" | "rejected" | null;
+  description: string | null;
 }
 
 export interface ImportStatus {
@@ -156,6 +208,8 @@ export interface AlbumQuery {
   lyrics?: boolean;
   sort?: string;
   hideDuplicates?: boolean;
+  kind?: "faba" | "audiobook";
+  audience?: Audience;
 }
 
 export const api = {
@@ -169,13 +223,47 @@ export const api = {
     if (p.lyrics) u.set("lyrics", "true");
     if (p.sort) u.set("sort", p.sort);
     if (p.hideDuplicates) u.set("hide_duplicates", "true");
+    if (p.kind) u.set("kind", p.kind);
+    if (p.audience) u.set("audience", p.audience);
     return req<{ items: Album[] }>(`/api/albums?${u}`).then((r) => r.items);
   },
   album: (id: string) => req<AlbumDetail>(`/api/albums/${id}`),
   facets: () => req<Facets>("/api/facets"),
   search: (q: string) => req<{ albums: Album[]; tracks: SearchTrack[] }>(`/api/search?q=${encodeURIComponent(q)}`),
   lyrics: (trackId: number) => req<{ lyrics: string | null }>(`/api/tracks/${trackId}/lyrics`),
-  continue: () => req<{ items: Album[] }>("/api/continue").then((r) => r.items),
+  continue: (kind: "faba" | "audiobook" = "faba") =>
+    req<{ items: Album[] }>(`/api/continue?kind=${kind}`).then((r) => r.items),
+  bookmarks: (albumId: string) =>
+    req<{ items: Bookmark[] }>(`/api/bookmarks?album_id=${encodeURIComponent(albumId)}`).then((r) => r.items),
+  addBookmark: (album_id: string, track_id: number, position: number, note?: string) =>
+    req<{ id: number }>("/api/bookmarks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ album_id, track_id, position, note }),
+    }),
+  editBookmark: (id: number, note: string | null) =>
+    req(`/api/bookmarks/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    }),
+  deleteBookmark: (id: number) => req(`/api/bookmarks/${id}`, { method: "DELETE" }),
+  bookSearch: (albumId: string, q?: string) =>
+    req<{ items: BookResult[] }>(`/api/albums/${albumId}/online-search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q: q || null }),
+    }),
+  bookApply: (albumId: string, candidateId: number) =>
+    req(`/api/albums/${albumId}/online-apply/${candidateId}`, { method: "POST" }),
+  bookClear: (albumId: string) => req(`/api/albums/${albumId}/online-clear`, { method: "POST" }),
+  resetProgress: (albumId: string) => req(`/api/progress/${albumId}`, { method: "DELETE" }),
+  setAudience: (albumId: string, audience: Audience | null) =>
+    req(`/api/albums/${albumId}/audience`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audience }),
+    }),
   favorite: (id: string, on: boolean) => req(`/api/favorites/${id}`, { method: on ? "POST" : "DELETE" }),
   progress: (album_id: string, track_id: number, position: number) =>
     fetch("/api/progress", {

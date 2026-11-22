@@ -24,11 +24,12 @@ export function HomePage() {
     queryKey: ["albums", "home"],
     queryFn: () => api.albums({ hideDuplicates: true }),
   });
-  const { data: cont = [] } = useQuery({ queryKey: ["continue"], queryFn: api.continue });
+  const { data: cont = [] } = useQuery({ queryKey: ["continue", "faba"], queryFn: () => api.continue() });
   const { data: facets } = useQuery({ queryKey: ["facets"], queryFn: api.facets });
+  const { data: books = [] } = useQuery({ queryKey: ["continue", "audiobook"], queryFn: () => api.continue("audiobook") });
 
   const profile = useActiveProfile();
-  if (!isLoading && !albums.length) return <EmptyLibrary />;
+  if (!isLoading && !albums.length) return <EmptyLibrary audiobooks={facets?.stats.audiobooks} />;
 
   const favorites = albums.filter((a) => a.favorite);
   const byCat = (c: string) => albums.filter((a) => a.category === c);
@@ -85,6 +86,7 @@ export function HomePage() {
         })}
       </div>
 
+      <Section title="🎧 Audiolibri in ascolto" albums={books} more="/audiobooks" />
       <Section title="I tuoi preferiti" albums={favorites} more="/library?favorites=1" />
       <Section title="Scopri" albums={discover} />
       <Section title="📖 Storie" albums={byCat("stories").filter((a) => !mainLang || a.language === mainLang).slice(0, 20)} more="/library?category=stories" />

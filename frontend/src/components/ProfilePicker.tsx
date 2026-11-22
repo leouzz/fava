@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
-import { api, type Profile } from "@/lib/api";
+import { api, type AudiobookAccess, type Profile } from "@/lib/api";
 import { useProfile } from "@/lib/profile";
 import { cn } from "@/lib/utils";
 import { AVATAR_COLORS, Avatar, FACES } from "./Avatar";
@@ -112,6 +112,12 @@ function ProfilePicker({ profiles }: { profiles: Profile[] }) {
   );
 }
 
+const BOOK_ACCESS: { v: AudiobookAccess; label: string }[] = [
+  { v: "all", label: "Tutti" },
+  { v: "kids", label: "Solo per bambini" },
+  { v: "none", label: "Nascosti" },
+];
+
 function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | null; canDelete: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const [name, setName] = useState(profile?.name ?? "");
@@ -119,6 +125,7 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
   const [color, setColor] = useState(profile?.color ?? AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)]);
   const [tab, setTab] = useState<"faces" | "figures">(avatar.startsWith("figure:") ? "figures" : "faces");
   const [langs, setLangs] = useState<string[]>(profile?.languages ?? []);
+  const [books, setBooks] = useState<AudiobookAccess>(profile?.audiobooks ?? "all");
   const { data: allLangs = [] } = useQuery({ queryKey: ["languages"], queryFn: api.languages });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +140,7 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
     if (!name.trim()) return setError("Scrivi un nome");
     setBusy(true);
     try {
-      const body = { name: name.trim(), avatar, color, languages: langs };
+      const body = { name: name.trim(), avatar, color, languages: langs, audiobooks: books };
       if (profile) {
         await api.updateProfile(profile.id, body);
         await qc.invalidateQueries({ queryKey: ["profiles"] });
@@ -219,6 +226,24 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
             </div>
           </div>
         )}
+
+        <div className="px-5 pb-3">
+          <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">Audiolibri</p>
+          <div className="flex flex-wrap gap-2">
+            {BOOK_ACCESS.map((o) => (
+              <button
+                key={o.v}
+                onClick={() => setBooks(o.v)}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-sm font-semibold",
+                  books === o.v ? "bg-primary text-primary-foreground" : "bg-white/10 text-white/80",
+                )}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div className="flex gap-1 px-5">
           {(["faces", "figures"] as const).map((t) => (

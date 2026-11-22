@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, db, importer, mki, uploads
+from . import audiobooks, auth, bookinfo, db, importer, mki, uploads
 from .config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -42,6 +42,7 @@ def _album_dict(r, fav: set[str] | None = None) -> dict:
     d["credits"] = json.loads(d.get("credits") or "{}")
     d["contents"] = json.loads(d.get("contents") or "[]")
     d["sources"] = json.loads(d.get("sources") or "[]")
+    d["online_fields"] = json.loads(d.get("online_fields") or "[]")
     d["cover"] = None
     if d.get("has_cover"):
         try:  # cache-busting: covers are cached by browsers for a day
@@ -71,6 +72,43 @@ def _lang_filter(conn, pid: int, alias: str = "a") -> tuple[str, list]:
     return f"({alias}.language IS NULL OR {alias}.language IN ({','.join('?' * len(langs))}))", langs
 
 
+def _book_filter(conn, pid: int, alias: str = "a") -> tuple[str, list]:
+    """SQL condition hiding audiobooks the profile may not see (all | kids | none)."""
+    r = conn.execute("SELECT audiobooks FROM profiles WHERE id=?", (pid,)).fetchone()
+    mode = (r[0] if r else None) or "all"
+    if mode == "none":
+        return f"{alias}.kind <> 'audiobook'", []
+    if mode == "kids":
+        return f"({alias}.kind <> 'audiobook' OR {alias}.audience = 'kids')", []
+    return "", []
+
+
+def _visible(conn, pid: int, alias: str = "a", languages: bool = True) -> tuple[list[str], list]:
+    where, args = [], []
+    for fn in ((_lang_filter, _book_filter) if languages else (_book_filter,)):
+        cond, cargs = fn(conn, pid, alias)
+        if cond:
+            where.append(cond)
+            args += cargs
+    return where, args
+
+
+def _progress_map(conn, pid: int, kind: str | None = None) -> dict[str, dict]:
+    """Resume point per album, with the seconds listened so far (whole album)."""
+    sql = ("SELECT p.album_id, p.track_id, p.position, p.updated_at, t.idx, t.title, "
+           "(SELECT COALESCE(SUM(t2.duration), 0) FROM tracks t2 WHERE t2.album_id=p.album_id AND t2.idx<t.idx) "
+           "AS before FROM profile_progress p JOIN tracks t ON t.id=p.track_id "
+           "JOIN albums a ON a.id=p.album_id WHERE p.profile_id=?")
+    args: list = [pid]
+    if kind:
+        sql += " AND a.kind=?"
+        args.append(kind)
+    return {r["album_id"]: {"track_id": r["track_id"], "position": r["position"], "idx": r["idx"],
+                            "title": r["title"], "listened": round(r["before"] + r["position"], 1),
+                            "updated_at": r["updated_at"]}
+            for r in conn.execute(sql, args)}
+
+
 def profile_id(x_profile: str | None = Header(None)) -> int:
     """Active profile from the X-Profile header (falls back to the first profile)."""
     with db.session() as conn:
@@ -80,6 +118,11 @@ def profile_id(x_profile: str | None = Header(None)) -> int:
                 return r[0]
         r = conn.execute("SELECT id FROM profiles ORDER BY id LIMIT 1").fetchone()
         return r[0] if r else 0
+
+
+def resolve_track(track_id: int) -> int:
+    """Track ids change at every import: map ids still held by open players."""
+    return importer.track_remap.get(track_id, track_id)
 
 
 def _fts_query(q: str) -> str:
@@ -93,6 +136,7 @@ SORTS = {
     "duration": "a.duration DESC",
     "tracks": "a.track_count DESC",
     "recent": "a.added_at DESC, a.id DESC",
+    "author": "a.subtitle IS NULL, a.subtitle COLLATE NOCASE, a.title COLLATE NOCASE",
 }
 
 
@@ -150,16 +194,19 @@ def logout(request: Request):
 @app.get("/api/albums")
 def albums(q: str = "", category: str = "", language: str = "", series: str = "",
            favorites: bool = False, lyrics: bool = False, status: str = "",
-           hide_duplicates: bool = False,
+           hide_duplicates: bool = False, kind: str = "faba", audience: str = "",
            sort: str = "id", limit: int = 500, offset: int = 0, pid: int = Depends(profile_id)) -> dict:
     where, args = [], []
+    if kind in ("faba", "audiobook"):
+        where.append("a.kind = ?")
+        args.append(kind)
     if q.strip():
         fq = _fts_query(q)
         if fq:
             where.append("a.id IN (SELECT album_id FROM search WHERE search MATCH ?)")
             args.append(fq)
     for col, val in (("category", category), ("language", language), ("series", series),
-                     ("status", status)):
+                     ("status", status), ("audience", audience)):
         if val:
             vals = val.split(",")
             where.append(f"a.{col} IN ({','.join('?' * len(vals))})")
@@ -171,12 +218,10 @@ def albums(q: str = "", category: str = "", language: str = "", series: str = ""
         where.append("a.has_lyrics = 1")
     if hide_duplicates:
         where.append("a.duplicate_of IS NULL")
-    if not language:
-        with db.session() as conn:
-            cond, cargs = _lang_filter(conn, pid)
-        if cond:
-            where.append(cond)
-            args += cargs
+    with db.session() as conn:
+        vw, va = _visible(conn, pid, languages=not language)
+    where += vw
+    args += va
     sql = "SELECT a.* FROM albums a"
     if where:
         sql += " WHERE " + " AND ".join(where)
@@ -184,14 +229,19 @@ def albums(q: str = "", category: str = "", language: str = "", series: str = ""
     with db.session() as conn:
         fav = _favorites(conn, pid)
         rows = conn.execute(sql, (*args, limit, offset)).fetchall()
-        return {"items": [_album_dict(r, fav) for r in rows]}
+        items = [_album_dict(r, fav) for r in rows]
+        if kind == "audiobook":
+            prog = _progress_map(conn, pid, "audiobook")
+            for d in items:
+                d["progress"] = prog.get(d["id"])
+        return {"items": items}
 
 
 @app.get("/api/facets")
 def facets(pid: int = Depends(profile_id)) -> dict:
     with db.session() as conn:
         cond, cargs = _lang_filter(conn, pid, "albums")
-        extra = f" AND {cond}" if cond else ""
+        extra = f" AND kind='faba'" + (f" AND {cond}" if cond else "")
 
         def count(col):
             return [{"value": r[0], "count": r[1]} for r in conn.execute(
@@ -206,7 +256,10 @@ def facets(pid: int = Depends(profile_id)) -> dict:
         stats["favorites"] = conn.execute("SELECT COUNT(*) FROM profile_favorites WHERE profile_id=?",
                                           (pid,)).fetchone()[0]
         stats["duplicates"] = conn.execute(
-            "SELECT COUNT(*) FROM albums WHERE duplicate_of IS NOT NULL").fetchone()[0]
+            "SELECT COUNT(*) FROM albums WHERE duplicate_of IS NOT NULL AND kind='faba'").fetchone()[0]
+        bw, ba = _visible(conn, pid)
+        stats["audiobooks"] = conn.execute(
+            "SELECT COUNT(*) FROM albums a WHERE " + " AND ".join(["a.kind='audiobook'", *bw]), ba).fetchone()[0]
         return {"categories": count("category"), "languages": count("language"),
                 "series": series, "stats": stats}
 
@@ -214,13 +267,16 @@ def facets(pid: int = Depends(profile_id)) -> dict:
 @app.get("/api/albums/{album_id}")
 def album(album_id: str, pid: int = Depends(profile_id)) -> dict:
     with db.session() as conn:
-        r = conn.execute("SELECT * FROM albums WHERE id=?", (album_id,)).fetchone()
+        bw, ba = _visible(conn, pid, languages=False)
+        r = conn.execute("SELECT * FROM albums a WHERE " + " AND ".join(["a.id=?", *bw]),
+                         (album_id, *ba)).fetchone()
         if not r:
             raise HTTPException(404)
         d = _album_dict(r, _favorites(conn, pid))
         d["tracks"] = [
             {k: t[k] for k in ("id", "idx", "title", "title_source", "duration", "bitrate",
-                               "source_kind", "is_extra", "valid")} | {"has_lyrics": bool(t["lyrics"])}
+                               "source_kind", "is_extra", "valid")}
+            | {"has_lyrics": bool(t["lyrics"]), "chapters": json.loads(t["chapters"]) if t["chapters"] else []}
             for t in conn.execute("SELECT * FROM tracks WHERE album_id=? ORDER BY idx", (album_id,))
         ]
         d["documents"] = [dict(x) | {"url": f"/api/documents/{x['id']}"} for x in conn.execute(
@@ -231,9 +287,7 @@ def album(album_id: str, pid: int = Depends(profile_id)) -> dict:
         d["same_audio"] = [dict(x) for x in conn.execute(
             "SELECT id, title, language FROM albums WHERE (id=? OR duplicate_of=?) AND id<>? ORDER BY id",
             (root_id, root_id, album_id))]
-        p = conn.execute("SELECT track_id, position FROM profile_progress WHERE profile_id=? AND album_id=?",
-                         (pid, album_id)).fetchone()
-        d["progress"] = dict(p) if p else None
+        d["progress"] = _progress_map(conn, pid).get(album_id)
         return d
 
 
@@ -244,10 +298,10 @@ def search(q: str, limit: int = 40, pid: int = Depends(profile_id)) -> dict:
         return {"albums": [], "tracks": []}
     with db.session() as conn:
         fav = _favorites(conn, pid)
-        cond, cargs = _lang_filter(conn, pid)
+        vw, va = _visible(conn, pid)
         allowed = None
-        if cond:
-            allowed = {r[0] for r in conn.execute(f"SELECT a.id FROM albums a WHERE {cond}", cargs)}
+        if vw:
+            allowed = {r[0] for r in conn.execute(f"SELECT a.id FROM albums a WHERE {' AND '.join(vw)}", va)}
         album_ids = [r[0] for r in conn.execute(
             "SELECT album_id FROM search WHERE search MATCH ? AND kind IN ('album','credit','info') "
             "GROUP BY album_id ORDER BY MIN(rank) LIMIT ?", (fq, limit))]
@@ -287,7 +341,7 @@ def lyrics(track_id: int) -> dict:
 
 @app.get("/api/covers/{album_id}.png")
 def cover(album_id: str):
-    if not re.fullmatch(r"\d{4}", album_id):
+    if not (re.fullmatch(r"\d{4}", album_id) or audiobooks.is_audiobook_id(album_id)):
         raise HTTPException(404)
     p = settings.covers_dir / f"{album_id}.png"
     if not p.exists():
@@ -320,7 +374,9 @@ def cover_candidates() -> dict:
             "FROM cover_candidates c JOIN albums a ON a.id=c.album_id "
             "WHERE c.status IN ('pending','auto') "
             "ORDER BY c.status='pending' DESC, c.score DESC, c.album_id").fetchall()
-        return {"items": [dict(r) | {"image_url": f"/api/covers/candidates/{r['id']}.png"} for r in rows]}
+        return {"items": [{k: r[k] for k in r.keys() if k != "data"}
+                          | {"image_url": f"/api/covers/candidates/{r['id']}.png" if r["image"] else None,
+                             "source": bookinfo.SOURCE_NAME.get(r["source"], r["source"])} for r in rows]}
 
 
 @app.get("/api/covers/candidates/{cid}.png")
@@ -344,6 +400,9 @@ def review_candidate(cid: int, body: ReviewIn) -> dict:
         c = conn.execute("SELECT * FROM cover_candidates WHERE id=?", (cid,)).fetchone()
         if not c:
             raise HTTPException(404)
+        if audiobooks.is_audiobook_id(c["album_id"]):
+            _review_book(conn, c, body.action)
+            return {"ok": True}
         target = settings.covers_dir / f"{c['album_id']}.png"
         if body.action == "accept":
             src = settings.data_dir / "catalog" / "img" / c["image"]
@@ -366,13 +425,112 @@ def review_candidate(cid: int, body: ReviewIn) -> dict:
     return {"ok": True}
 
 
+def _review_book(conn, c, action: str) -> None:
+    aid = c["album_id"]
+    if action == "accept":
+        r = bookinfo.Result.from_json(json.loads(c["data"] or "{}"))
+        bookinfo.undo(conn, aid)  # replace what another match had filled
+        if r.image_url and not c["image"]:
+            img = bookinfo.image_file(r.image_url)
+            if img:
+                conn.execute("UPDATE cover_candidates SET image=? WHERE id=?", (img.name, c["id"]))
+        bookinfo.apply(conn, aid, r)
+        conn.execute("UPDATE cover_candidates SET status='accepted' WHERE id=?", (c["id"],))
+        conn.execute("UPDATE cover_candidates SET status='rejected' WHERE album_id=? AND id<>? "
+                     "AND status IN ('pending','auto','accepted')", (aid, c["id"]))
+        conn.execute("DELETE FROM cover_candidates WHERE album_id=? AND status='option'", (aid,))
+    elif action == "reject":
+        if c["status"] in ("auto", "accepted"):
+            bookinfo.undo(conn, aid)
+        conn.execute("UPDATE cover_candidates SET status='rejected' WHERE id=?", (c["id"],))
+    else:
+        raise HTTPException(400, "action must be accept or reject")
+
+
+class BookSearchIn(BaseModel):
+    q: str | None = None  # free text; default: title + author
+
+
+@app.post("/api/albums/{album_id}/online-search")
+def book_search(album_id: str, body: BookSearchIn) -> dict:
+    """Manual lookup from the book page: results are kept as "option" candidates."""
+    if not audiobooks.is_audiobook_id(album_id):
+        raise HTTPException(404)
+    with db.session() as conn:
+        a = conn.execute("SELECT title, subtitle, language FROM albums WHERE id=?", (album_id,)).fetchone()
+    if not a:
+        raise HTTPException(404)
+    cache = bookinfo.Cache()
+    try:
+        if body.q and body.q.strip():
+            q = body.q.strip()[:200]
+            results = bookinfo.search(cache, q, None, a["language"])
+            for r in results:  # rank against the book, not the free text
+                ts, au = bookinfo.score(r, a["title"], a["subtitle"])
+                r.score = round(max(r.score, ts * (au if au >= 0 else 0.8)), 3)
+            results.sort(key=lambda r: -r.score)
+        else:
+            results = bookinfo.search(cache, a["title"], a["subtitle"], a["language"])
+    finally:
+        cache.save()
+    results = results[:12]
+    with db.session() as conn:
+        conn.execute("DELETE FROM cover_candidates WHERE album_id=? AND status='option'", (album_id,))
+        current = {r[0]: r[1] for r in conn.execute(
+            "SELECT product_url, status FROM cover_candidates WHERE album_id=?", (album_id,))}
+        items = []
+        for r in results:
+            status = current.get(r.url)
+            cid = bookinfo.store_candidate(conn, album_id, r, status or "option", None)
+            items.append({"id": cid, "source": r.source, "source_name": bookinfo.SOURCE_NAME[r.source],
+                          "title": r.title, "author": r.author, "year": r.year, "genre": r.genre,
+                          "thumb": r.thumb_url, "url": r.url, "score": r.score, "status": status,
+                          "description": (r.description or "")[:300] or None})
+    return {"items": items}
+
+
+@app.post("/api/albums/{album_id}/online-apply/{cid}")
+def book_apply(album_id: str, cid: int) -> dict:
+    with db.session() as conn:
+        c = conn.execute("SELECT * FROM cover_candidates WHERE id=? AND album_id=?", (cid, album_id)).fetchone()
+        if not c or not audiobooks.is_audiobook_id(album_id):
+            raise HTTPException(404)
+        r = bookinfo.Result.from_json(json.loads(c["data"] or "{}"))
+        if r.source == "openlibrary" and not r.description:
+            cache = bookinfo.Cache()
+            try:
+                bookinfo.complete(cache, r)
+            finally:
+                cache.save()
+            conn.execute("UPDATE cover_candidates SET data=? WHERE id=?", (json.dumps(r.to_json()), cid))
+            c = conn.execute("SELECT * FROM cover_candidates WHERE id=?", (cid,)).fetchone()
+        _review_book(conn, c, "accept")
+    return {"ok": True}
+
+
+@app.post("/api/albums/{album_id}/online-clear")
+def book_clear(album_id: str) -> dict:
+    """Forget the online match: what it filled goes away and it is not searched again."""
+    if not audiobooks.is_audiobook_id(album_id):
+        raise HTTPException(404)
+    with db.session() as conn:
+        bookinfo.undo(conn, album_id)
+        conn.execute("UPDATE cover_candidates SET status='rejected' WHERE album_id=? "
+                     "AND status IN ('auto','accepted','pending')", (album_id,))
+    return {"ok": True}
+
+
 # --------------------------------------------------------------------------- streaming
 
 _RANGE = re.compile(r"bytes=(\d*)-(\d*)")
 
 
+MEDIA_TYPES = {"mki": "audio/mpeg", "mp3": "audio/mpeg", "m4b": "audio/mp4", "m4a": "audio/mp4"}
+
+
 @app.api_route("/api/stream/{track_id}", methods=["GET", "HEAD"])
 def stream(track_id: int, request: Request):
+    track_id = resolve_track(track_id)
     with db.session() as conn:
         r = conn.execute("SELECT source_kind, source_path FROM tracks WHERE id=?", (track_id,)).fetchone()
     if not r:
@@ -403,8 +561,9 @@ def stream(track_id: int, request: Request):
     }
     if status == 206:
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    media_type = MEDIA_TYPES.get(r["source_kind"], "audio/mpeg")
     if request.method == "HEAD":
-        return Response(status_code=status, headers=headers, media_type="audio/mpeg")
+        return Response(status_code=status, headers=headers, media_type=media_type)
 
     if r["source_kind"] == "mki":
         body = mki.iter_decoded(path, start, end)
@@ -420,7 +579,7 @@ def stream(track_id: int, request: Request):
                     left -= len(buf)
                     yield buf
         body = body_gen()
-    return StreamingResponse(body, status_code=status, headers=headers, media_type="audio/mpeg")
+    return StreamingResponse(body, status_code=status, headers=headers, media_type=media_type)
 
 
 # --------------------------------------------------------------------------- user state
@@ -447,6 +606,7 @@ class ProgressIn(BaseModel):
 
 @app.put("/api/progress")
 def put_progress(p: ProgressIn, pid: int = Depends(profile_id)) -> dict:
+    p.track_id = resolve_track(p.track_id)
     with db.session() as conn:
         conn.execute("INSERT INTO profile_progress(profile_id, album_id, track_id, position, updated_at) "
                      "VALUES(?,?,?,?,datetime('now')) ON CONFLICT(profile_id, album_id) DO UPDATE SET "
@@ -455,21 +615,110 @@ def put_progress(p: ProgressIn, pid: int = Depends(profile_id)) -> dict:
     return {"ok": True}
 
 
+class BookmarkIn(BaseModel):
+    album_id: str
+    track_id: int
+    position: float
+    note: str | None = None
+
+
+class BookmarkNoteIn(BaseModel):
+    note: str | None = None
+
+
+def _note(s: str | None) -> str | None:
+    return (s or "").strip()[:500] or None
+
+
+@app.get("/api/bookmarks")
+def bookmarks(album_id: str, pid: int = Depends(profile_id)) -> dict:
+    with db.session() as conn:
+        rows = conn.execute(
+            "SELECT b.id, b.album_id, b.track_idx, b.position, b.note, b.created_at, t.id AS track_id "
+            "FROM profile_bookmarks b LEFT JOIN tracks t ON t.album_id=b.album_id AND t.idx=b.track_idx "
+            "WHERE b.profile_id=? AND b.album_id=? ORDER BY b.track_idx, b.position", (pid, album_id)).fetchall()
+        return {"items": [dict(r) for r in rows if r["track_id"] is not None]}
+
+
+@app.post("/api/bookmarks")
+def add_bookmark(b: BookmarkIn, pid: int = Depends(profile_id)) -> dict:
+    with db.session() as conn:
+        t = conn.execute("SELECT idx FROM tracks WHERE id=? AND album_id=?",
+                         (resolve_track(b.track_id), b.album_id)).fetchone()
+        if not t:
+            raise HTTPException(404, "traccia non trovata")
+        if conn.execute("SELECT COUNT(*) FROM profile_bookmarks WHERE profile_id=? AND album_id=?",
+                        (pid, b.album_id)).fetchone()[0] >= 200:
+            raise HTTPException(400, "massimo 200 segnalibri per libro")
+        cur = conn.execute("INSERT INTO profile_bookmarks(profile_id, album_id, track_idx, position, note) "
+                           "VALUES(?,?,?,?,?)", (pid, b.album_id, t[0], max(0.0, b.position), _note(b.note)))
+        return {"id": cur.lastrowid}
+
+
+@app.put("/api/bookmarks/{bid}")
+def edit_bookmark(bid: int, b: BookmarkNoteIn, pid: int = Depends(profile_id)) -> dict:
+    with db.session() as conn:
+        if not conn.execute("UPDATE profile_bookmarks SET note=? WHERE id=? AND profile_id=?",
+                            (_note(b.note), bid, pid)).rowcount:
+            raise HTTPException(404)
+    return {"ok": True}
+
+
+@app.delete("/api/bookmarks/{bid}")
+def del_bookmark(bid: int, pid: int = Depends(profile_id)) -> dict:
+    with db.session() as conn:
+        conn.execute("DELETE FROM profile_bookmarks WHERE id=? AND profile_id=?", (bid, pid))
+    return {"ok": True}
+
+
+@app.delete("/api/progress/{album_id}")
+def del_progress(album_id: str, pid: int = Depends(profile_id)) -> dict:
+    with db.session() as conn:
+        conn.execute("DELETE FROM profile_progress WHERE profile_id=? AND album_id=?", (pid, album_id))
+    return {"ok": True}
+
+
 @app.get("/api/continue")
-def continue_listening(limit: int = 12, pid: int = Depends(profile_id)) -> dict:
+def continue_listening(limit: int = 12, kind: str = "faba", pid: int = Depends(profile_id)) -> dict:
     with db.session() as conn:
         fav = _favorites(conn, pid)
-        rows = conn.execute(
-            "SELECT a.*, p.track_id AS p_track, p.position AS p_pos, t.idx AS p_idx, t.title AS p_title "
-            "FROM profile_progress p JOIN albums a ON a.id=p.album_id JOIN tracks t ON t.id=p.track_id "
-            "WHERE p.profile_id=? ORDER BY p.updated_at DESC LIMIT ?", (pid, limit)).fetchall()
+        vw, va = _visible(conn, pid, languages=False)
+        prog = _progress_map(conn, pid, kind if kind in ("faba", "audiobook") else None)
+        ids = sorted(prog, key=lambda k: prog[k]["updated_at"] or "", reverse=True)
         out = []
-        for r in rows:
+        for aid in ids:
+            r = conn.execute("SELECT * FROM albums a WHERE " + " AND ".join(["a.id=?", *vw]),
+                             (aid, *va)).fetchone()
+            if not r:
+                continue
+            # finished audiobooks leave "continue listening"
+            if r["kind"] == "audiobook" and prog[aid]["listened"] >= (r["duration"] or 0) - 30:
+                continue
             d = _album_dict(r, fav)
-            d["progress"] = {"track_id": r["p_track"], "position": r["p_pos"],
-                             "idx": r["p_idx"], "title": r["p_title"]}
+            d["progress"] = prog[aid]
             out.append(d)
+            if len(out) >= limit:
+                break
         return {"items": out}
+
+
+class AudienceIn(BaseModel):
+    audience: str | None  # kids | adults | None (unknown)
+
+
+@app.post("/api/albums/{album_id}/audience")
+def set_audience(album_id: str, body: AudienceIn) -> dict:
+    if body.audience not in ("kids", "adults", None) or not audiobooks.is_audiobook_id(album_id):
+        raise HTTPException(400)
+    with db.session() as conn:
+        if not conn.execute("UPDATE albums SET audience=? WHERE id=?", (body.audience, album_id)).rowcount:
+            raise HTTPException(404)
+        if body.audience:
+            conn.execute("INSERT INTO album_overrides(album_id, audience) VALUES(?,?) "
+                         "ON CONFLICT(album_id) DO UPDATE SET audience=excluded.audience", (album_id, body.audience))
+        else:
+            conn.execute("DELETE FROM album_overrides WHERE album_id=?", (album_id,))
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------- profiles
@@ -483,6 +732,7 @@ class ProfileIn(BaseModel):
     avatar: str = "face:bear"
     color: str = "#ff6b5e"
     languages: list[str] = []
+    audiobooks: str = "all"  # all | kids | none
 
 
 def _check_profile(p: ProfileIn) -> ProfileIn:
@@ -492,13 +742,15 @@ def _check_profile(p: ProfileIn) -> ProfileIn:
     if not AVATAR_RE.match(p.avatar) or not COLOR_RE.match(p.color):
         raise HTTPException(400, "avatar o colore non validi")
     p.languages = sorted({x for x in p.languages if re.fullmatch(r"[a-z]{2}", x)})
+    if p.audiobooks not in ("all", "kids", "none"):
+        raise HTTPException(400, "audiolibri: all, kids o none")
     return p
 
 
 def _profiles(conn) -> list[dict]:
     return [dict(r) | {"favorites": r["favs"], "languages": [x for x in (r["languages"] or "").split(",") if x]}
             for r in conn.execute(
-        "SELECT p.id, p.name, p.avatar, p.color, p.languages, "
+        "SELECT p.id, p.name, p.avatar, p.color, p.languages, p.audiobooks, "
         "(SELECT COUNT(*) FROM profile_favorites f WHERE f.profile_id=p.id) AS favs "
         "FROM profiles p ORDER BY p.id")]
 
@@ -524,8 +776,8 @@ def create_profile(p: ProfileIn) -> dict:
     with db.session() as conn:
         if conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] >= 12:
             raise HTTPException(400, "massimo 12 profili")
-        cur = conn.execute("INSERT INTO profiles(name, avatar, color, languages) VALUES(?,?,?,?)",
-                           (p.name, p.avatar, p.color, ",".join(p.languages) or None))
+        cur = conn.execute("INSERT INTO profiles(name, avatar, color, languages, audiobooks) VALUES(?,?,?,?,?)",
+                           (p.name, p.avatar, p.color, ",".join(p.languages) or None, p.audiobooks))
         return {"id": cur.lastrowid}
 
 
@@ -533,8 +785,9 @@ def create_profile(p: ProfileIn) -> dict:
 def update_profile(pid: int, p: ProfileIn) -> dict:
     p = _check_profile(p)
     with db.session() as conn:
-        if not conn.execute("UPDATE profiles SET name=?, avatar=?, color=?, languages=? WHERE id=?",
-                            (p.name, p.avatar, p.color, ",".join(p.languages) or None, pid)).rowcount:
+        if not conn.execute("UPDATE profiles SET name=?, avatar=?, color=?, languages=?, audiobooks=? WHERE id=?",
+                            (p.name, p.avatar, p.color, ",".join(p.languages) or None, p.audiobooks,
+                             pid)).rowcount:
             raise HTTPException(404)
     return {"ok": True}
 

@@ -120,6 +120,12 @@ export function SettingsPage() {
         <UploadCard />
       </AdminOnly>
 
+      <div id="audiolibri" className="scroll-mt-4">
+        <AdminOnly what="Carica audiolibri">
+          <UploadCard target="audiobooks" />
+        </AdminOnly>
+      </div>
+
       <OfflineCard />
 
       {facets && (
@@ -229,9 +235,17 @@ function CastHelp() {
   );
 }
 
-export function EmptyLibrary() {
+export function EmptyLibrary({ audiobooks = 0 }: { audiobooks?: number }) {
   return (
     <div className="mx-auto max-w-md space-y-4 px-4 pt-[calc(var(--safe-top)+3rem)] text-center">
+      {audiobooks > 0 && (
+        <Link
+          to="/audiobooks"
+          className="flex items-center justify-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm font-black text-primary-foreground"
+        >
+          🎧 Vai ai tuoi {audiobooks} audiolibri
+        </Link>
+      )}
       <img src="/icon.svg" className="mx-auto h-20 w-20" alt="" />
       <h1 className="text-2xl font-black">Benvenuto in FAVA</h1>
       <p className="text-sm text-muted-foreground">

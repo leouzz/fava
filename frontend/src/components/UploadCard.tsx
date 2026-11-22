@@ -14,12 +14,43 @@ interface UploadBatch {
   modified: number;
 }
 
-const ACCEPT = ".zip,.mki,.MKI,.mp3,.pdf,.csv,.txt";
+type Target = "backups" | "audiobooks";
 
-function putFile(batch: string, path: string, file: File, onProgress: (loaded: number) => void): Promise<void> {
+const TARGETS: Record<Target, { title: string; accept: string; ext: RegExp | null; help: React.ReactNode; empty: string }> = {
+  backups: {
+    title: "Carica backup",
+    accept: ".zip,.mki,.MKI,.mp3,.pdf,.csv,.txt",
+    ext: null,
+    help: (
+      <>
+        Cartelle <code>K0010</code> con i file <code>CP01.MKI</code>…, MP3, PDF o uno ZIP che li contiene. Dopo il caricamento
+        parte l'import.
+      </>
+    ),
+    empty: "Eliminare questi file caricati? Gli album spariranno al prossimo import.",
+  },
+  audiobooks: {
+    title: "Carica audiolibri",
+    accept: ".m4b,.m4a,.mp3,.zip,.jpg,.jpeg,.png",
+    ext: /\.(m4b|m4a|mp3|zip|jpe?g|png|webp)$/i,
+    help: (
+      <>
+        File <code>.m4b</code> (un file per libro, con i capitoli), cartelle di <code>.mp3</code> / <code>.m4a</code> o uno ZIP.
+        Titolo, autore, copertina e capitoli vengono letti dai file. Dopo il caricamento parte l'import; nella pagina del libro
+        puoi indicare se è per bambini o per adulti.
+      </>
+    ),
+    empty: "Eliminare questi audiolibri caricati? Spariranno al prossimo import.",
+  },
+};
+
+function putFile(target: Target, batch: string, path: string, file: File, onProgress: (loaded: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", `/api/uploads/file?batch=${encodeURIComponent(batch)}&path=${encodeURIComponent(path)}`);
+    xhr.open(
+      "PUT",
+      `/api/uploads/file?target=${target}&batch=${encodeURIComponent(batch)}&path=${encodeURIComponent(path)}`,
+    );
     Object.entries(profileHeader()).forEach(([k, v]) => xhr.setRequestHeader(k, v));
     xhr.upload.onprogress = (e) => onProgress(e.loaded);
     xhr.onload = () => {
@@ -39,21 +70,24 @@ function putFile(batch: string, path: string, file: File, onProgress: (loaded: n
   });
 }
 
-/** Upload backups (folder, files or a ZIP) from the browser, then import. */
-export function UploadCard() {
+/** Upload backups or audiobooks (folder, files or a ZIP) from the browser, then import. */
+export function UploadCard({ target = "backups" }: { target?: Target }) {
+  const cfg = TARGETS[target];
   const qc = useQueryClient();
   const files = useRef<HTMLInputElement>(null);
   const folder = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<{ sent: number; total: number; name: string } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const { data } = useQuery({
-    queryKey: ["uploads"],
-    queryFn: () => fetch("/api/uploads", { headers: profileHeader() }).then((r) => r.json() as Promise<{ items: UploadBatch[] }>),
+    queryKey: ["uploads", target],
+    queryFn: () =>
+      fetch(`/api/uploads?target=${target}`, { headers: profileHeader() }).then((r) => r.json() as Promise<{ items: UploadBatch[] }>),
   });
 
   const start = async (list: FileList | null) => {
     if (!list?.length) return;
-    const all = Array.from(list).filter((f) => !f.name.startsWith("."));
+    const all = Array.from(list).filter((f) => !f.name.startsWith(".") && (!cfg.ext || cfg.ext.test(f.name)));
+    if (!all.length) return setMsg("Nessun file adatto nella selezione.");
     const total = all.reduce((n, f) => n + f.size, 0);
     const batch = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
     let done = 0;
@@ -63,7 +97,7 @@ export function UploadCard() {
       const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
       setState({ sent: done, total, name: rel });
       try {
-        await putFile(batch, rel, f, (loaded) => setState({ sent: done + loaded, total, name: rel }));
+        await putFile(target, batch, rel, f, (loaded) => setState({ sent: done + loaded, total, name: rel }));
       } catch (e) {
         skipped.push(`${rel} (${e instanceof Error ? e.message : e})`);
       }
@@ -84,11 +118,8 @@ export function UploadCard() {
   const pct = state && state.total ? Math.round((state.sent / state.total) * 100) : 0;
   return (
     <div className="rounded-2xl bg-card p-4">
-      <h2 className="text-lg font-black">Carica backup</h2>
-      <p className="mt-0.5 text-xs text-muted-foreground">
-        Cartelle <code>K0010</code> con i file <code>CP01.MKI</code>…, MP3, PDF o uno ZIP che li contiene. Dopo il
-        caricamento parte l'import.
-      </p>
+      <h2 className="text-lg font-black">{cfg.title}</h2>
+      <p className="mt-0.5 text-xs text-muted-foreground">{cfg.help}</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button size="sm" variant="secondary" disabled={!!state} onClick={() => folder.current?.click()}>
           <FolderUp className="h-4 w-4" /> Cartella
@@ -96,7 +127,7 @@ export function UploadCard() {
         <Button size="sm" variant="secondary" disabled={!!state} onClick={() => files.current?.click()}>
           <Upload className="h-4 w-4" /> File o ZIP
         </Button>
-        <input ref={files} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => start(e.target.files)} />
+        <input ref={files} type="file" multiple accept={cfg.accept} className="hidden" onChange={(e) => start(e.target.files)} />
         <input
           ref={folder}
           type="file"
@@ -132,8 +163,8 @@ export function UploadCard() {
               <button
                 aria-label="Elimina caricamento"
                 onClick={async () => {
-                  if (!confirm("Eliminare questi file caricati? Gli album spariranno al prossimo import.")) return;
-                  await fetch(`/api/uploads/${b.batch}`, { method: "DELETE" });
+                  if (!confirm(cfg.empty)) return;
+                  await fetch(`/api/uploads/${b.batch}?target=${target}`, { method: "DELETE" });
                   qc.invalidateQueries({ queryKey: ["uploads"] });
                 }}
                 className="p-1 text-white/50 hover:text-red-400"

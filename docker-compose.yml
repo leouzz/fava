@@ -7,7 +7,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./asset:/assets:ro      # your Faba backups (MKI / MP3 / PDF)
+      - ./asset:/assets:ro      # your Faba backups (MKI / MP3 / PDF), audiobooks in asset/audiobooks
       - ./data:/data            # database, covers, cache
     environment:
       # Family password (required to use the app) and optional parents' password

@@ -5,8 +5,14 @@ import { CATEGORY, cn } from "@/lib/utils";
 import { Cover } from "./Cover";
 import { usePlayer, current } from "@/player/store";
 import { Equalizer } from "./Equalizer";
+import { BookCard } from "./BookCard";
 
 export function AlbumCard({ album, className, wide }: { album: Album; className?: string; wide?: boolean }) {
+  if (album.kind === "audiobook") return <BookCard album={album} className={className} wide={wide} />;
+  return <FabaCard album={album} className={className} wide={wide} />;
+}
+
+function FabaCard({ album, className, wide }: { album: Album; className?: string; wide?: boolean }) {
   const playingHere = usePlayer((s) => current(s)?.albumId === album.id);
   const isPlaying = usePlayer((s) => s.playing);
   const cat = CATEGORY[album.category] ?? CATEGORY.other;
