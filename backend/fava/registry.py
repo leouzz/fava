@@ -28,6 +28,7 @@ class Entry:
     language: str | None
     name: str
     sku: str | None
+    language_label: str = ""  # as written in the registry, e.g. "Italian/English", "Latam"
 
 
 def _parse(md: str) -> dict[str, Entry]:
@@ -38,14 +39,15 @@ def _parse(md: str) -> dict[str, Entry]:
             continue
         fid, lang, name, sku = (x.strip() for x in m.groups())
         first = lang.split("/")[0].strip().lower()
-        out[fid] = Entry(fid, LANG_CODES.get(first), name, sku or None)
+        out[fid] = Entry(fid, LANG_CODES.get(first), name, sku or None, lang)
     return out
 
 
-def load() -> dict[str, Entry]:
+def load(download: bool = True) -> dict[str, Entry]:
+    """The registry; with download=False only the cached copy (fetched once if missing)."""
     cache = settings.data_dir / "registry.md"
     text = None
-    if settings.registry_url:
+    if settings.registry_url and (download or not cache.exists()):
         try:
             req = urllib.request.Request(settings.registry_url, headers={"User-Agent": "fava-importer"})
             with urllib.request.urlopen(req, timeout=10) as r:

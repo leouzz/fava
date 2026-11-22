@@ -11,6 +11,7 @@ import { LibraryPage } from "@/pages/Library";
 import { AlbumPage } from "@/pages/Album";
 import { SettingsPage } from "@/pages/Settings";
 import { AudiobooksPage } from "@/pages/Audiobooks";
+import { CollectionPage } from "@/pages/Collection";
 import { EasyMode, EasyPausedBanner } from "@/components/EasyMode";
 import { useEasy } from "@/lib/easy";
 import { current, usePlayer } from "@/player/store";
@@ -53,6 +54,7 @@ export default function App() {
               <Route path="/audiobooks" element={<AudiobooksPage />} />
               <Route path="/album/:id" element={<AlbumPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/collection" element={<CollectionPage />} />
               <Route path="*" element={<HomePage />} />
             </Routes>
           </div>

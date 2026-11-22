@@ -11,6 +11,7 @@ import { AdminOnly, SessionCard } from "@/components/AuthGate";
 import { OfflineCard } from "@/components/OfflineUi";
 import { UploadCard } from "@/components/UploadCard";
 import { EasyModeCard, NfcTagsCard } from "@/components/NfcPair";
+import { CollectionCard } from "./Collection";
 import { useActiveProfile } from "@/components/ProfilePicker";
 import { Avatar } from "@/components/Avatar";
 import { useProfile } from "@/lib/profile";
@@ -136,6 +137,8 @@ export function SettingsPage() {
           <Stat label="Ore di ascolto" value={Math.round(facets.stats.duration / 3600)} />
         </div>
       )}
+
+      <CollectionCard />
 
       <ProfilesCard />
 

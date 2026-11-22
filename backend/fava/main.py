@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import audiobooks, auth, bookinfo, db, importer, mki, uploads
+from . import audiobooks, auth, bookinfo, db, importer, mki, registry, uploads
 from .config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -866,6 +866,38 @@ def unpair_nfc_tag(uid: str) -> dict:
     with db.session() as conn:
         conn.execute("DELETE FROM nfc_tags WHERE uid=?", (_nfc_uid(uid),))
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------- collection
+
+def _small_album(r) -> dict:
+    d = _album_dict(dict(r))
+    return {k: d[k] for k in ("id", "title", "cover", "color", "category", "track_count", "duplicate_of")}
+
+
+@app.get("/api/collection")
+def collection() -> dict:
+    """Every official figure in the community registry, with the albums you have."""
+    reg = registry.load(download=False)
+    with db.session() as conn:
+        albums = {r["id"]: r for r in conn.execute(
+            "SELECT id, kind, title, language, has_cover, color, category, track_count, duplicate_of "
+            "FROM albums WHERE kind='faba'")}
+    items = []
+    for fid in sorted(set(reg) | set(albums)):
+        e, a = reg.get(fid), albums.get(fid)
+        items.append({
+            "id": fid,
+            "name": e.name if e else a["title"],
+            "language": (e.language if e else None) or (a["language"] if a else None),
+            "language_label": e.language_label if e else None,
+            "sku": e.sku if e else None,
+            "listed": e is not None,
+            "album": _small_album(a) if a else None,
+        })
+    cache = settings.data_dir / "registry.md"
+    return {"items": items, "registry": bool(reg),
+            "updated_at": int(cache.stat().st_mtime) if cache.exists() else None}
 
 
 # --------------------------------------------------------------------------- import / verify

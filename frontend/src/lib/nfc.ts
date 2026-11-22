@@ -6,11 +6,19 @@
  * reader stops when nobody is listening, so Android handles tags normally again.
  *
  * Cards are identified by their serial number, so they work blank, as they are:
- * nothing is written on them.
+ * nothing is written on them. Official Faba figures also carry their figure id
+ * in an NDEF text record ("02190530" + 4-digit id + "00", see the myfaba-hacks
+ * TAGS.md), which is the K-folder of the backup: they play without pairing.
  */
 
+interface NDEFRecordLike {
+  recordType: string;
+  encoding?: string | null;
+  data?: DataView | null;
+}
 interface NDEFReadingEvent extends Event {
   serialNumber: string;
+  message?: { records: readonly NDEFRecordLike[] };
 }
 interface NDEFReaderLike extends EventTarget {
   scan(opts?: { signal?: AbortSignal }): Promise<void>;
@@ -22,7 +30,8 @@ declare global {
 }
 
 export interface NfcListener {
-  onTag: (uid: string) => void;
+  /** `uid`: serial number (may be "" on odd chips); `figure`: official Faba figure id, e.g. "0010" */
+  onTag: (uid: string, figure: string | null) => void;
   /** a card was seen but could not be read (unsupported chip) */
   onUnreadable?: () => void;
 }
@@ -45,6 +54,24 @@ export const normUid = (s: string): string => s.toLowerCase().replace(/[^0-9a-f]
 /** 04:A2:3B:… for display. */
 export const fmtUid = (uid: string): string => (uid.match(/.{1,2}/g) ?? []).join(":").toUpperCase();
 
+/** Figure id written on official Faba figures (and on copies made for the box). */
+const FABA_RECORD = /02190530(\d{4})00/;
+
+function fabaFigure(e: NDEFReadingEvent): string | null {
+  for (const r of e.message?.records ?? []) {
+    if (!r.data) continue;
+    let text = "";
+    try {
+      text = new TextDecoder(r.encoding || "utf-8").decode(r.data);
+    } catch {
+      text = new TextDecoder().decode(r.data);
+    }
+    const m = text.match(FABA_RECORD);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 const stack: NfcListener[] = [];
 let ctrl: AbortController | null = null;
 let starting: Promise<void> | null = null;
@@ -63,15 +90,18 @@ async function start(): Promise<void> {
   const c = new AbortController();
   const reader = new Reader();
   reader.addEventListener("reading", (e) => {
-    const uid = normUid((e as NDEFReadingEvent).serialNumber || "");
-    if (!uid) return top()?.onUnreadable?.();
+    const ev = e as NDEFReadingEvent;
+    const uid = normUid(ev.serialNumber || "");
+    const figure = fabaFigure(ev);
+    if (!uid && !figure) return top()?.onUnreadable?.();
     // some phones report the same tap twice in a row
+    const key = uid || `figure:${figure}`;
     const now = Date.now();
-    if (uid === lastUid && now - lastAt < 1500) return;
-    lastUid = uid;
+    if (key === lastUid && now - lastAt < 1500) return;
+    lastUid = key;
     lastAt = now;
     navigator.vibrate?.(60);
-    top()?.onTag(uid);
+    top()?.onTag(uid, figure);
   });
   reader.addEventListener("readingerror", () => top()?.onUnreadable?.());
   starting = reader

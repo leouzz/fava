@@ -57,7 +57,7 @@ export function EasyMode() {
   };
 
   const playAlbum = useCallback(
-    async (albumId: string, fromTop = false) => {
+    async (albumId: string, fromTop = false, figure = false) => {
       const s = usePlayer.getState();
       if (!fromTop && current(s)?.albumId === albumId) {
         if (!s.playing) player.toggle();
@@ -69,7 +69,19 @@ export function EasyMode() {
         const { index, at } = fromTop ? { index: 0, at: 0 } : startPoint(album);
         player.playAlbum(album, album.tracks, index, at);
       } catch (e) {
-        flash({ text: "Non riesco a farla partire", sub: e instanceof ApiError && e.status === 404 ? "Album non disponibile per questo profilo" : "Controlla la connessione" });
+        const missing = e instanceof ApiError && e.status === 404;
+        if (missing && figure) {
+          // an official figure whose backup we don't have: say which one
+          const all = await qc
+            .fetchQuery({ queryKey: ["collection"], queryFn: api.collection, staleTime: 10 * 60_000 })
+            .catch(() => undefined);
+          const name = all?.items.find((x) => x.id === albumId)?.name;
+          flash({ text: "Questa storia non c'è ancora", sub: name ? `${name} · K${albumId}` : `Figura K${albumId}` });
+        } else
+          flash({
+            text: "Non riesco a farla partire",
+            sub: missing ? "Album non disponibile per questo profilo" : "Controlla la connessione",
+          });
       } finally {
         setLoading(false);
       }
@@ -78,17 +90,19 @@ export function EasyMode() {
   );
 
   const onTag = useCallback(
-    async (uid: string) => {
-      const find = (list?: NfcTag[]) => list?.find((t) => t.uid === uid);
+    async (uid: string, figure: string | null) => {
+      const find = (list?: NfcTag[]) => (uid ? list?.find((t) => t.uid === uid) : undefined);
       let tag = find(qc.getQueryData<NfcTag[]>(["nfc-tags"]));
-      if (!tag) {
+      if (!tag && !figure) {
         // maybe paired a moment ago on another device
         const fresh = await qc.fetchQuery({ queryKey: ["nfc-tags"], queryFn: api.nfcTags, staleTime: 0 }).catch(() => undefined);
         tag = find(fresh);
       }
+      // a pairing wins, so even an official figure can be pointed elsewhere
+      if (tag?.album) return void playAlbum(tag.album.id);
+      if (figure) return void playAlbum(figure, false, true);
       if (!tag) return flash({ text: "Tessera sconosciuta", sub: `Associala da Gestione · ${fmtUid(uid)}` });
-      if (!tag.album) return flash({ text: "Questa tessera non ha più la sua storia", sub: fmtUid(uid) });
-      void playAlbum(tag.album.id);
+      flash({ text: "Questa tessera non ha più la sua storia", sub: fmtUid(uid) });
     },
     [qc, playAlbum],
   );
@@ -100,7 +114,7 @@ export function EasyMode() {
     stopNfc.current?.();
     try {
       stopNfc.current = await listenNfc({
-        onTag: (uid) => void onTag(uid),
+        onTag: (uid, figure) => void onTag(uid, figure),
         onUnreadable: () => flash({ text: "Questa tessera non si legge", sub: "Riprova tenendola ferma" }),
       });
       setNfcError(null);

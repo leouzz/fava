@@ -47,6 +47,8 @@ export const LANGUAGE: Record<string, { label: string; flag: string }> = {
   ca: { label: "Català", flag: "🏴" },
   en: { label: "English", flag: "🇬🇧" },
   de: { label: "Deutsch", flag: "🇩🇪" },
+  nl: { label: "Nederlands", flag: "🇳🇱" },
+  pt: { label: "Português", flag: "🇵🇹" },
 };
 
 export function hashHue(s: string): number {

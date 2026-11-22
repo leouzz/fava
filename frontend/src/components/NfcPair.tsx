@@ -27,7 +27,7 @@ export function NfcWaves({ className }: { className?: string }) {
   );
 }
 
-type Phase = "scan" | "confirm" | "pick" | "done";
+type Phase = "scan" | "figure" | "confirm" | "pick" | "done";
 
 /**
  * Pairing: read a card, then choose the album (or confirm `album` when opened
@@ -38,6 +38,7 @@ export function PairTagDialog({ album, onClose }: { album?: Target; onClose: () 
   const { data: tags } = useNfcTags();
   const [phase, setPhase] = useState<Phase>("scan");
   const [uid, setUid] = useState("");
+  const [figure, setFigure] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [paired, setPaired] = useState<Target | null>(null);
@@ -62,11 +63,14 @@ export function PairTagDialog({ album, onClose }: { album?: Target; onClose: () 
     }
   };
 
-  const gotUid = (code: string) => {
+  const gotUid = (code: string, fig: string | null = null) => {
     setUid(code);
+    setFigure(fig);
     setError(null);
+    if (!code) return setPhase("figure"); // official figure without a readable serial: nothing to pair
     const known = qc.getQueryData<NfcTag[]>(["nfc-tags"])?.find((t) => t.uid === code);
-    if (!album) setPhase("pick");
+    if (fig && !known && (!album || album.id === fig)) setPhase("figure");
+    else if (!album) setPhase("pick");
     else if (known && known.target_id !== album.id) setPhase("confirm");
     else void pair(code, album);
   };
@@ -76,7 +80,7 @@ export function PairTagDialog({ album, onClose }: { album?: Target; onClose: () 
     let stop: (() => void) | undefined;
     let alive = true;
     listenNfc({
-      onTag: (code) => alive && gotUid(code),
+      onTag: (code, fig) => alive && gotUid(code, fig),
       onUnreadable: () => setError("Questa tessera non si legge: il chip non è compatibile con Chrome (vedi il README)"),
     })
       .then((s) => {
@@ -148,6 +152,17 @@ export function PairTagDialog({ album, onClose }: { album?: Target; onClose: () 
           </div>
         )}
 
+        {phase === "figure" && figure && (
+          <FigureInfo
+            figure={figure}
+            canPair={!!uid}
+            onPair={() => (album ? pair(uid, album) : setPhase("pick"))}
+            pairLabel={album ? `Fai partire "${album.title}"` : "Associa a un altro album"}
+            onAgain={again}
+            onClose={onClose}
+          />
+        )}
+
         {phase === "confirm" && album && existing && (
           <div className="py-3">
             <p className="text-sm">
@@ -197,6 +212,57 @@ export function PairTagDialog({ album, onClose }: { album?: Target; onClose: () 
         )}
 
         {error && <p className="mt-3 text-center text-sm font-semibold text-red-400">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
+/** An official Faba figure was read: it plays its own album without pairing. */
+function FigureInfo({
+  figure,
+  canPair,
+  onPair,
+  pairLabel,
+  onAgain,
+  onClose,
+}: {
+  figure: string;
+  canPair: boolean;
+  onPair: () => void;
+  pairLabel: string;
+  onAgain: () => void;
+  onClose: () => void;
+}) {
+  const { data } = useQuery({ queryKey: ["collection"], queryFn: api.collection, staleTime: 10 * 60_000 });
+  const item = data?.items.find((x) => x.id === figure);
+  return (
+    <div className="flex flex-col items-center py-4 text-center">
+      <span className="w-24 [container-type:inline-size]">
+        <Cover
+          album={item?.album ?? { id: figure, title: item?.name ?? `K${figure}`, cover: null }}
+          rounded="rounded-2xl"
+          showTitle={false}
+        />
+      </span>
+      <p className="mt-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">Figura Faba ufficiale · K{figure}</p>
+      <p className="mt-1 text-base font-black">{item?.album?.title ?? item?.name ?? "Figura sconosciuta"}</p>
+      <p className="mt-2 text-sm text-muted-foreground">
+        {item?.album
+          ? "Parte da sola in modalità Easy: non serve associarla."
+          : "Parte da sola in modalità Easy appena avrai il suo backup: ora non è nella tua libreria."}
+      </p>
+      <div className="mt-5 flex w-full flex-col gap-2">
+        <Button onClick={onClose}>Ok</Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" className="flex-1" onClick={onAgain}>
+            Leggi un'altra
+          </Button>
+          {canPair && (
+            <Button variant="ghost" className="flex-1" onClick={onPair}>
+              {pairLabel}
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );

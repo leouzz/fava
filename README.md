@@ -51,8 +51,11 @@ and Chromecast.
 - **Chromecast** through the Google Cast Default Media Receiver, with the Remote
   Playback API as a fallback.
 - An option to skip the short Faba intro and outro jingles.
+- **Collection.** A page listing every official figure in the community
+  registry, with the ones you have and the ones you're missing, per language.
 - **NFC cards and Easy mode.** Pair any NFC card with an album or audiobook,
-  then hold the card to the phone and it plays. Easy mode, turned on per
+  then hold the card to the phone and it plays. **Official Faba figures** play
+  their own album with no pairing at all. Easy mode, turned on per
   profile, is a full-screen view for small kids with a few big buttons, handy on
   a dedicated Android phone (see
   [NFC cards and Easy mode](#nfc-cards-and-easy-mode)).
@@ -305,6 +308,15 @@ Hold a card to the phone and its album starts, like a figure on the Faba box.
   cards are recognised by their serial number, so nothing is written on them and
   they can stay blank.
 
+**Official figures.** A Faba figure holds its figure id in an NDEF text record
+(`02190530` + the 4-digit id + `00`, see the
+[figure registry](https://github.com/wansors/myfaba-hacks/blob/main/TAGS.md)),
+and that id is the `K` folder of the backup. Hold a figure to the phone and its
+album plays, no pairing needed. A figure whose backup you don't have is named on
+screen. Cards you wrote yourself for the Faba box (also with the `abcde` prefix
+used on NTAG215) are recognised the same way. Pairing a figure to another album
+overrides its own one.
+
 **Pairing** (parents' password). Go to **Gestione → Tessere NFC → Associa**, hold
 a card to the phone and pick the album. "Associa un'altra" pairs a whole pile in
 a row. You can also tap the NFC button on an album or audiobook page and then
@@ -337,6 +349,15 @@ kid's profile (with Easy mode on). Then, in Android settings, enable **App pinni
 Keep the phone on the charger. Web NFC only reads while the screen is on and
 FAVA is in the foreground, which Easy mode takes care of. Albums downloaded for
 offline listening also play from cards without network.
+
+## Collection
+
+**Gestione → Collezione** lists every official figure from the community registry
+(the same `TAGS.md`, downloaded at each import and cached in `data/registry.md`),
+with the ones you have and the ones you're missing. Filter by language (the one
+you own most figures in comes first), by have/missing, or search by name, figure
+id or SKU. Albums of yours that the registry doesn't list appear too, marked as
+such. With `FAVA_REGISTRY_URL=""` the page has nothing to compare with.
 
 ## Configuration
 
@@ -391,3 +412,4 @@ Query + zustand on the frontend.
 | `POST /api/import`, `GET /api/import/status` | Start an import and follow its progress |
 | `GET /api/issues` | Verification report |
 | `GET /api/nfc/tags`, `PUT /api/nfc/tags/{uid}` `{album_id}`, `DELETE /api/nfc/tags/{uid}` | NFC card pairings (changes need the parents' password) |
+| `GET /api/collection` | Official figures from the registry, each with your album (or `null`) |

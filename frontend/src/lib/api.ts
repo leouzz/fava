@@ -115,6 +115,27 @@ export interface NfcTag {
   album: { id: string; kind: "faba" | "audiobook"; title: string; cover: string | null; color: string | null; category: string } | null;
 }
 
+/** An official figure (community registry) and the album you have for it. */
+export interface CollectionItem {
+  id: string;
+  name: string;
+  language: string | null;
+  /** as written in the registry: "Italian", "Italian/English", "Latam"… */
+  language_label: string | null;
+  sku: string | null;
+  /** false: an album of yours that the registry doesn't list */
+  listed: boolean;
+  album: {
+    id: string;
+    title: string;
+    cover: string | null;
+    color: string | null;
+    category: string;
+    track_count: number;
+    duplicate_of: string | null;
+  } | null;
+}
+
 export interface Facet {
   value: string;
   count: number;
@@ -331,6 +352,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
     }),
+  collection: () => req<{ items: CollectionItem[]; registry: boolean; updated_at: number | null }>("/api/collection"),
   nfcTags: () => req<{ items: NfcTag[] }>("/api/nfc/tags").then((r) => r.items),
   pairNfcTag: (uid: string, album_id: string) =>
     req<{ uid: string }>(`/api/nfc/tags/${encodeURIComponent(uid)}`, {
