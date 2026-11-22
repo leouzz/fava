@@ -27,6 +27,16 @@ export interface NfcListener {
   onUnreadable?: () => void;
 }
 
+/** `needsTap`: Chrome wants a fresh tap to show its permission prompt. */
+export class NfcError extends Error {
+  constructor(
+    message: string,
+    public needsTap = false,
+  ) {
+    super(message);
+  }
+}
+
 export const nfcSupported = (): boolean => typeof window !== "undefined" && "NDEFReader" in window;
 
 /** Lowercase hex without separators, the form stored by the server. */
@@ -83,9 +93,11 @@ function stop() {
 }
 
 /**
- * Start listening for cards. The first call must come from a tap (the browser
- * asks for permission). Resolves with a function that stops listening; rejects
- * with a readable message when NFC is unavailable.
+ * Start listening for cards. Until NFC is allowed for the site, call it straight
+ * from a tap handler, before anything else that uses up the tap (fullscreen,
+ * popups): Chrome then shows its permission prompt, otherwise it refuses
+ * silently. scan() runs synchronously inside this call for that reason.
+ * Resolves with a function that stops listening; rejects with an NfcError.
  */
 export async function listenNfc(l: NfcListener): Promise<() => void> {
   stack.push(l);
@@ -93,9 +105,18 @@ export async function listenNfc(l: NfcListener): Promise<() => void> {
     await start();
   } catch (e) {
     remove(l);
-    throw new Error(nfcError(e));
+    throw await nfcError(e);
   }
   return () => remove(l);
+}
+
+/** "granted" | "prompt" | "denied", or null when the browser can't tell. */
+export async function nfcPermission(): Promise<PermissionState | null> {
+  try {
+    return (await navigator.permissions.query({ name: "nfc" as PermissionName })).state;
+  } catch {
+    return null;
+  }
 }
 
 function remove(l: NfcListener) {
@@ -104,12 +125,18 @@ function remove(l: NfcListener) {
   if (!stack.length) stop();
 }
 
-function nfcError(e: unknown): string {
+async function nfcError(e: unknown): Promise<NfcError> {
   const name = e instanceof DOMException ? e.name : "";
-  if (name === "NotAllowedError") return "Permesso NFC negato: consentilo dalle impostazioni del sito in Chrome";
-  if (name === "NotSupportedError") return "NFC spento o assente: attivalo nelle impostazioni di Android";
-  if (name === "NotReadableError") return "NFC occupato da un'altra app";
-  return e instanceof Error ? e.message : String(e);
+  if (name === "NotAllowedError") {
+    if ((await nfcPermission()) === "denied")
+      return new NfcError(
+        "NFC bloccato per questo sito. In Chrome tocca l'icona a sinistra dell'indirizzo → Autorizzazioni (o Impostazioni sito) → NFC → Consenti, poi ricarica la pagina",
+      );
+    return new NfcError("Chrome deve chiedere il permesso NFC: tocca «Attiva NFC» e conferma", true);
+  }
+  if (name === "NotSupportedError") return new NfcError("NFC spento o assente: attivalo nelle impostazioni di Android");
+  if (name === "NotReadableError") return new NfcError("NFC occupato da un'altra app");
+  return new NfcError(e instanceof Error ? e.message : String(e));
 }
 
 /** Why NFC can't work here, or null when it can. */

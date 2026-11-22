@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Keyboard, Loader2, Nfc, Search, Trash2, X } from "lucide-react";
 import { api, ApiError, type NfcTag } from "@/lib/api";
-import { fmtUid, listenNfc, nfcUnavailableReason, normUid } from "@/lib/nfc";
+import { fmtUid, listenNfc, NfcError, nfcUnavailableReason, normUid } from "@/lib/nfc";
 import { isAdmin, useAuth } from "@/lib/auth";
 import { useProfile } from "@/lib/profile";
 import { cn } from "@/lib/utils";
@@ -42,6 +42,8 @@ export function PairTagDialog({ album, onClose }: { album?: Target; onClose: () 
   const [busy, setBusy] = useState(false);
   const [paired, setPaired] = useState<Target | null>(null);
   const [manual, setManual] = useState(false);
+  const [needsTap, setNeedsTap] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const unavailable = nfcUnavailableReason();
   const existing = tags?.find((t) => t.uid === uid);
 
@@ -77,14 +79,21 @@ export function PairTagDialog({ album, onClose }: { album?: Target; onClose: () 
       onTag: (code) => alive && gotUid(code),
       onUnreadable: () => setError("Questa tessera non si legge: il chip non è compatibile con Chrome (vedi il README)"),
     })
-      .then((s) => (alive ? (stop = s) : s()))
-      .catch((e: Error) => setError(e.message));
+      .then((s) => {
+        setNeedsTap(false);
+        if (alive) stop = s;
+        else s();
+      })
+      .catch((e: Error) => {
+        setError(e.message);
+        setNeedsTap(e instanceof NfcError && e.needsTap);
+      });
     return () => {
       alive = false;
       stop?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, unavailable]);
+  }, [phase, unavailable, attempt]);
 
   const again = () => {
     setUid("");
@@ -116,6 +125,17 @@ export function PairTagDialog({ album, onClose }: { album?: Target; onClose: () 
                 <p className="mt-5 text-base font-bold">Avvicina la tessera al retro del telefono</p>
                 <p className="mt-1 text-xs text-muted-foreground">Tienila ferma un attimo, finché il telefono vibra</p>
               </>
+            )}
+            {needsTap && (
+              <Button
+                className="mt-4"
+                onClick={() => {
+                  setError(null);
+                  setAttempt((a) => a + 1);
+                }}
+              >
+                <Nfc className="h-4 w-4" /> Attiva NFC
+              </Button>
             )}
             {busy && <Loader2 className="mt-4 h-6 w-6 animate-spin text-muted-foreground" />}
             {manual || unavailable ? (

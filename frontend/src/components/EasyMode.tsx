@@ -6,11 +6,11 @@
  * "Chi ascolta?" to switch to another profile. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Lock, Pause, Play, RotateCcw, SkipBack, SkipForward } from "lucide-react";
+import { Loader2, Lock, Nfc, Pause, Play, RotateCcw, SkipBack, SkipForward } from "lucide-react";
 import { api, ApiError, type AlbumDetail, type NfcTag } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useProfile } from "@/lib/profile";
-import { fmtUid, listenNfc, nfcUnavailableReason } from "@/lib/nfc";
+import { fmtUid, listenNfc, NfcError, nfcUnavailableReason } from "@/lib/nfc";
 import { albumColor, cn } from "@/lib/utils";
 import { player } from "@/player/engine";
 import { current, usePlayer } from "@/player/store";
@@ -37,7 +37,7 @@ export function EasyMode() {
   const qc = useQueryClient();
   const { data: tags } = useNfcTags();
   const [started, setStarted] = useState(false);
-  const [nfcError, setNfcError] = useState<string | null>(null);
+  const [nfcError, setNfcError] = useState<NfcError | null>(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [exiting, setExiting] = useState(false);
@@ -93,12 +93,11 @@ export function EasyMode() {
     [qc, playAlbum],
   );
 
-  // Needs a tap: the browser asks for NFC permission and allows sound only after one.
-  const start = async () => {
-    document.documentElement.requestFullscreen?.({ navigationUI: "hide" }).catch(() => undefined);
-    setStarted(true);
+  // Must run inside a tap: Chrome asks for the NFC permission only then.
+  const startNfc = async () => {
     const why = nfcUnavailableReason();
-    if (why) return setNfcError(why);
+    if (why) return setNfcError(new NfcError(why));
+    stopNfc.current?.();
     try {
       stopNfc.current = await listenNfc({
         onTag: (uid) => void onTag(uid),
@@ -106,8 +105,16 @@ export function EasyMode() {
       });
       setNfcError(null);
     } catch (e) {
-      setNfcError((e as Error).message);
+      setNfcError(e instanceof NfcError ? e : new NfcError(String(e)));
     }
+  };
+
+  // The tap also unlocks sound. NFC goes first: fullscreen uses up the tap, and
+  // without one Chrome refuses NFC without showing its prompt.
+  const start = () => {
+    setStarted(true);
+    void startNfc();
+    document.documentElement.requestFullscreen?.({ navigationUI: "hide" }).catch(() => undefined);
   };
 
   useEffect(
@@ -202,7 +209,9 @@ export function EasyMode() {
         </div>
       )}
 
-      {started && nfcError && <TapFallback error={nfcError} tags={tags} onPick={playAlbum} compact={!!item} />}
+      {started && nfcError && (
+        <TapFallback error={nfcError} onRetry={startNfc} tags={tags} onPick={playAlbum} compact={!!item} />
+      )}
 
       {notice && (
         <div className="pointer-events-none absolute inset-x-4 bottom-[calc(var(--safe-bottom)+1.5rem)] mx-auto max-w-sm rounded-2xl bg-black/80 p-4 text-center shadow-2xl animate-in fade-in">
@@ -228,12 +237,36 @@ function BigButton({ label, onClick, className, children }: { label: string; onC
   );
 }
 
-/** Without NFC (desktop, iPhone, HTTP): the paired albums as big tiles. */
-function TapFallback({ error, tags, onPick, compact }: { error: string; tags?: NfcTag[]; onPick: (id: string) => void; compact: boolean }) {
+/** Without NFC (desktop, iPhone, HTTP, no permission): the paired albums as big tiles. */
+function TapFallback({
+  error,
+  onRetry,
+  tags,
+  onPick,
+  compact,
+}: {
+  error: NfcError;
+  onRetry: () => void;
+  tags?: NfcTag[];
+  onPick: (id: string) => void;
+  compact: boolean;
+}) {
   const albums = (tags ?? []).flatMap((t) => (t.album ? [t.album] : [])).filter((a, i, all) => all.findIndex((x) => x.id === a.id) === i);
   return (
     <div className={cn("px-4 pb-[calc(var(--safe-bottom)+1rem)]", !compact && "absolute inset-x-0 top-1/2 -translate-y-1/2")}>
-      {!compact && <p className="mb-1 text-center text-xs font-semibold text-amber-200/80">{error}</p>}
+      {error.needsTap && (
+        <div className="mb-4 flex justify-center">
+          <button
+            onClick={onRetry}
+            className="flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-lg font-black text-primary-foreground shadow-xl active:scale-95"
+          >
+            <Nfc className="h-6 w-6" /> Attiva NFC
+          </button>
+        </div>
+      )}
+      {(!compact || error.needsTap) && (
+        <p className="mx-auto mb-2 max-w-md text-center text-xs font-semibold text-amber-200/80">{error.message}</p>
+      )}
       {albums.length > 0 ? (
         <div className={cn("no-scrollbar flex gap-3 overflow-x-auto", !compact && "justify-center flex-wrap")}>
           {albums.map((a) => (
