@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Lock, Nfc, Pause, Play, RotateCcw, SkipBack, SkipForward } from "lucide-react";
 import { api, ApiError, type AlbumDetail, type NfcTag } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useProfile } from "@/lib/profile";
+import { useEasy } from "@/lib/easy";
 import { fmtUid, listenNfc, NfcError, nfcUnavailableReason } from "@/lib/nfc";
 import { albumColor, cn } from "@/lib/utils";
 import { player } from "@/player/engine";
@@ -133,10 +133,10 @@ export function EasyMode() {
     return () => window.clearInterval(t);
   }, [qc]);
 
-  // "Chi ascolta?" opens on top: choosing a profile without Easy mode closes this screen
+  // back to the normal app on this profile; Easy mode returns when the app is opened again
   const leave = () => {
     setExiting(false);
-    useProfile.getState().openPicker();
+    useEasy.getState().pause(true);
   };
 
   const color = item ? albumColor({ id: item.albumId, color: item.color }) : "#2a2a2a";
@@ -286,7 +286,10 @@ function TapFallback({
 function HoldToUnlock({ onUnlock }: { onUnlock: () => void }) {
   const [holding, setHolding] = useState(false);
   const timer = useRef<number>();
-  const down = () => {
+  const down = (e: React.PointerEvent<HTMLButtonElement>) => {
+    // keep the finger on the button even if it slides a little
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    window.clearTimeout(timer.current);
     setHolding(true);
     timer.current = window.setTimeout(() => {
       setHolding(false);
@@ -302,12 +305,13 @@ function HoldToUnlock({ onUnlock }: { onUnlock: () => void }) {
       aria-label="Tieni premuto per uscire"
       onPointerDown={down}
       onPointerUp={up}
-      onPointerLeave={up}
       onPointerCancel={up}
       onContextMenu={(e) => e.preventDefault()}
-      className="relative flex h-11 w-11 items-center justify-center rounded-full text-white/30"
+      // without these, Android turns the hold into its own long-press gesture and cancels it
+      style={{ touchAction: "none", WebkitTouchCallout: "none", WebkitUserSelect: "none" }}
+      className="relative flex h-14 w-14 items-center justify-center rounded-full text-white/30"
     >
-      <svg viewBox="0 0 44 44" className="absolute inset-0 -rotate-90">
+      <svg viewBox="0 0 44 44" className="pointer-events-none absolute inset-1.5 -rotate-90">
         <circle
           cx="22"
           cy="22"
@@ -320,7 +324,7 @@ function HoldToUnlock({ onUnlock }: { onUnlock: () => void }) {
           className={holding ? "opacity-80 transition-[stroke-dashoffset] duration-[2000ms] ease-linear" : "opacity-0"}
         />
       </svg>
-      <Lock className="h-5 w-5" />
+      <Lock className="pointer-events-none h-5 w-5" />
     </button>
   );
 }
@@ -352,10 +356,13 @@ function ExitDialog({ onCancel, onExit }: { onCancel: () => void; onExit: () => 
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 px-6" onClick={onCancel}>
-      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="w-full max-w-xs space-y-3 rounded-3xl bg-card p-5">
-        <h2 className="text-lg font-black">Cambiare profilo?</h2>
-        <p className="text-sm text-muted-foreground">{protectedApp ? "Password genitori" : `Quanto fa ${q[0]} × ${q[1]}?`}</p>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 px-6">
+      <form onSubmit={submit} className="w-full max-w-xs space-y-3 rounded-3xl bg-card p-5">
+        <h2 className="text-lg font-black">Uscire dalla modalità Easy?</h2>
+        <p className="text-xs text-muted-foreground">
+          Torna da sola alla prossima apertura dell'app. Per spegnerla del tutto: Gestisci profili → modifica.
+        </p>
+        <p className="text-sm font-semibold">{protectedApp ? "Password genitori" : `Quanto fa ${q[0]} × ${q[1]}?`}</p>
         <input
           autoFocus
           type={protectedApp ? "password" : "number"}
@@ -413,4 +420,17 @@ function useTrapBack(on: boolean) {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, [on]);
+}
+
+/** Normal app on an Easy profile, after leaving with the password. */
+export function EasyPausedBanner() {
+  return (
+    <div className="flex items-center gap-3 bg-primary/15 px-4 py-2 pt-[calc(var(--safe-top)+0.5rem)] text-sm">
+      <Lock className="h-4 w-4 shrink-0 text-primary" />
+      <span className="min-w-0 flex-1 truncate font-semibold">Modalità Easy in pausa</span>
+      <Button size="sm" onClick={() => useEasy.getState().pause(false)}>
+        Riattiva
+      </Button>
+    </div>
+  );
 }

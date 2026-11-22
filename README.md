@@ -325,7 +325,9 @@ is active the phone shows Easy mode, across reloads and restarts too.
   on, and the Android back gesture is ignored.
 - To leave, hold the lock in the top corner for 2 seconds, then enter the
   parents' password (or answer a multiplication when FAVA has no passwords).
-  *Chi ascolta?* opens: choose a profile without Easy mode.
+  The normal app opens on the same profile, with an "Easy mode paused" bar to
+  go back. Easy mode returns by itself the next time the app is opened; to turn
+  it off for good, edit the profile.
 - Without NFC (desktop, iPhone, plain HTTP) Easy mode shows the paired albums as
   big tiles to tap, which is handy for trying it out.
 

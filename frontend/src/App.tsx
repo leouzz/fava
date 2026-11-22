@@ -11,7 +11,7 @@ import { LibraryPage } from "@/pages/Library";
 import { AlbumPage } from "@/pages/Album";
 import { SettingsPage } from "@/pages/Settings";
 import { AudiobooksPage } from "@/pages/Audiobooks";
-import { EasyMode } from "@/components/EasyMode";
+import { EasyMode, EasyPausedBanner } from "@/components/EasyMode";
 import { useEasy } from "@/lib/easy";
 import { current, usePlayer } from "@/player/store";
 import { cn } from "@/lib/utils";
@@ -21,7 +21,8 @@ export default function App() {
   const { pathname } = useLocation();
   const profile = useActiveProfile();
   const cachedEasy = useEasy((s) => s.on);
-  const easy = profile ? profile.easy : cachedEasy;
+  const paused = useEasy((s) => s.paused);
+  const easy = (profile ? profile.easy : cachedEasy) && !paused;
   useEffect(() => {
     if (profile && profile.easy !== cachedEasy) useEasy.getState().set(profile.easy);
   }, [profile, cachedEasy]);
@@ -41,6 +42,7 @@ export default function App() {
     <div className="flex h-[100dvh] overflow-hidden">
       <SideNav />
       <div className="relative flex min-w-0 flex-1 flex-col">
+        {paused && profile?.easy && <EasyPausedBanner />}
         <OfflineBanner />
         <main id="main" className={cn("flex-1 overflow-y-auto overscroll-contain", hasTrack ? "pb-36 md:pb-24" : "pb-20 md:pb-4")}>
           <div className="mx-auto max-w-6xl">
