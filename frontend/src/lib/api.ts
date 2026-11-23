@@ -99,6 +99,17 @@ export interface Issue {
   message: string;
 }
 
+/** An album or audiobook still without a picture. */
+export interface MissingCover {
+  id: string;
+  kind: "faba" | "audiobook";
+  title: string;
+  language: string | null;
+  category: string;
+  duplicate_of: string | null;
+  product_url: string | null;
+}
+
 export interface AlbumDetail extends Album {
   tracks: Track[];
   documents: { id: number; kind: string; name: string; url: string }[];
@@ -329,6 +340,13 @@ export const api = {
       track_sources: Record<string, number>;
       title_sources: Record<string, number>;
     }>("/api/issues"),
+  missingCovers: () => req<{ items: MissingCover[] }>("/api/covers/missing").then((r) => r.items),
+  /** Restore a file made by "Scarica" (GET /api/backup): an import starts afterwards. */
+  restoreBackup: (file: File) =>
+    req<{ ok: boolean; links: number; covers: number; images: number; profiles: number | null }>("/api/backup", {
+      method: "POST",
+      body: file,
+    }),
   coverCandidates: () => req<{ items: CoverCandidate[] }>("/api/covers/candidates").then((r) => r.items),
   reviewCover: (id: number, action: "accept" | "reject") =>
     req(`/api/covers/candidates/${id}`, {

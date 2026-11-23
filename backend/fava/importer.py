@@ -549,7 +549,8 @@ def _details_phase(conn, st: ImportState, reg, srcs, issue) -> None:
             log.warning("catalog linking failed: %s", e)
 
     # 2. read product pages
-    links = conn.execute("SELECT album_id, source, url, method FROM album_links ORDER BY album_id").fetchall()
+    links = conn.execute("SELECT l.album_id, l.source, l.url, l.method FROM album_links l "
+                         "JOIN albums a ON a.id=l.album_id ORDER BY l.album_id").fetchall()
     if not links:
         return
     st.phase, st.total, st.done = "details", len(links), 0

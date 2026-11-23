@@ -18,7 +18,7 @@ self.addEventListener("install", (e) => {
 
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 
-const NO_CACHE = ["/api/import", "/api/uploads", "/api/covers/candidates"];
+const NO_CACHE = ["/api/import", "/api/uploads", "/api/covers/candidates", "/api/backup"];
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
@@ -29,7 +29,7 @@ self.addEventListener("fetch", (event) => {
 
   if (path.startsWith("/api/stream/")) {
     event.respondWith(streamFromCache(req, path));
-  } else if (path.startsWith("/api/covers/") && !path.startsWith("/api/covers/candidates")) {
+  } else if (path.startsWith("/api/covers/") && path.endsWith(".png") && !path.startsWith("/api/covers/candidates")) {
     event.respondWith(cacheFirst(req, IMG));
   } else if (path.startsWith("/api/")) {
     if (NO_CACHE.some((p) => path.startsWith(p))) return;

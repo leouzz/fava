@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import audiobooks, auth, bookinfo, db, importer, mki, registry, uploads
+from . import audiobooks, auth, backup, bookinfo, db, importer, mki, registry, uploads
 from .config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -34,6 +34,7 @@ app = FastAPI(title="FAVA", version="0.1.0")
 app.add_middleware(_GZip, minimum_size=2048)
 app.middleware("http")(auth.middleware)
 app.include_router(uploads.router)
+app.include_router(backup.router)
 
 
 @app.on_event("startup")
@@ -389,6 +390,16 @@ def _quote(s: str) -> str:
 
 
 # --------------------------------------------------------------------------- cover review
+
+@app.get("/api/covers/missing")
+def missing_covers() -> dict:
+    """Albums and audiobooks still without a picture (whole library, no profile filters)."""
+    with db.session() as conn:
+        rows = conn.execute(
+            "SELECT id, kind, title, language, category, duplicate_of, product_url FROM albums "
+            "WHERE has_cover=0 ORDER BY kind='audiobook', duplicate_of IS NOT NULL, id").fetchall()
+    return {"items": [dict(r) for r in rows]}
+
 
 @app.get("/api/covers/candidates")
 def cover_candidates() -> dict:

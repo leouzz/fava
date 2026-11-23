@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { usePlayer } from "@/player/store";
 import { CoverReview } from "@/components/CoverReview";
+import { DataBackupCard, MissingCoversCard } from "@/components/DataCards";
 import { AdminOnly, SessionCard } from "@/components/AuthGate";
 import { OfflineCard } from "@/components/OfflineUi";
 import { UploadCard } from "@/components/UploadCard";
@@ -150,6 +151,14 @@ export function SettingsPage() {
 
       <AdminOnly what="Copertine trovate online">
         <CoverReview />
+      </AdminOnly>
+
+      <AdminOnly what="Album senza copertina">
+        <MissingCoversCard />
+      </AdminOnly>
+
+      <AdminOnly what="Salva i dati dell'app">
+        <DataBackupCard />
       </AdminOnly>
 
       <div className="rounded-2xl bg-card p-4">

@@ -93,6 +93,14 @@ It holds the database, covers, the online-catalogue cache, profiles and
 favourites. Because the paths inside the container stay the same (`/assets`,
 `/data`), nothing has to be re-imported.
 
+**Saving the app's data.** **Gestione → Salva i dati dell'app → Scarica** gives a
+small zip with everything that can't be rebuilt from the audio: product pages
+linked to figures, covers accepted or discarded, hand-uploaded covers, profiles
+and PINs, NFC cards, favourites, progress and bookmarks. **Ripristina** loads it
+back (on the same or a new installation) and runs an import to apply it. The
+audio itself is not included: keep a copy of `asset/` (and of `data/uploads`,
+`data/audiobooks` if you upload from the browser).
+
 ## Build from source
 
 ```bash

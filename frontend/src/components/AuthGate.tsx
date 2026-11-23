@@ -4,6 +4,7 @@ import { Loader2, Lock, LogOut, ShieldCheck } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { isAdmin, useAuth } from "@/lib/auth";
 import { Button } from "./ui/button";
+import { PasswordInput } from "./ui/password-input";
 
 /** Loads the session; shows the login screen when the family password is required. */
 export function AuthGate({ children }: { children: React.ReactNode }) {
@@ -66,14 +67,12 @@ export function PasswordForm({ label, onDone }: { label: string; onDone?: () => 
   };
   return (
     <form onSubmit={submit} className="space-y-3">
-      <input
-        type="password"
+      <PasswordInput
         autoFocus
         autoComplete="current-password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         placeholder="Password"
-        className="h-12 w-full rounded-xl bg-white/10 px-4 text-[16px] font-semibold outline-none focus:ring-2 focus:ring-primary"
       />
       {error && <p className="text-sm font-semibold text-red-400">{error}</p>}
       <Button type="submit" className="w-full" size="lg" disabled={busy || !password}>

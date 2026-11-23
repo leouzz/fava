@@ -147,6 +147,8 @@ PUBLIC = ("/api/auth/", "/api/config")
 MEDIA = ("/api/stream/", "/api/covers/")
 ADMIN_RULES = (
     ("POST", "/api/import"),
+    ("GET", "/api/backup"),
+    ("POST", "/api/backup"),
     ("POST", "/api/covers/candidates/"),
     ("PUT", "/api/uploads"),
     ("GET", "/api/uploads"),

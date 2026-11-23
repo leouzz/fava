@@ -18,6 +18,7 @@ import { Cover } from "./Cover";
 import { useActiveProfile } from "./ProfilePicker";
 import { NfcWaves, useNfcTags } from "./NfcPair";
 import { Button } from "./ui/button";
+import { PasswordInput } from "./ui/password-input";
 
 type Notice = { text: string; sub?: string } | null;
 
@@ -430,13 +431,7 @@ function PinDialog({
               if (value) void submit(value);
             }}
           >
-            <input
-              autoFocus
-              type="password"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              className="h-12 w-full rounded-xl bg-white/10 px-4 text-[16px] font-semibold outline-none focus:ring-2 focus:ring-primary"
-            />
+            <PasswordInput autoFocus value={value} onChange={(e) => setValue(e.target.value)} />
             <Button type="submit" className="mt-3 w-full" disabled={busy || !value}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Esci"}
             </Button>
@@ -500,14 +495,18 @@ function PasswordDialog({ onCancel, onExit }: { onCancel: () => void; onExit: ()
           Torna da sola alla prossima apertura dell'app. Per spegnerla del tutto: Gestisci profili → modifica.
         </p>
         <p className="text-sm font-semibold">{protectedApp ? "Password genitori" : `Quanto fa ${q[0]} × ${q[1]}?`}</p>
-        <input
-          autoFocus
-          type={protectedApp ? "password" : "number"}
-          inputMode={protectedApp ? undefined : "numeric"}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          className="h-12 w-full rounded-xl bg-white/10 px-4 text-[16px] font-semibold outline-none focus:ring-2 focus:ring-primary"
-        />
+        {protectedApp ? (
+          <PasswordInput autoFocus value={value} onChange={(e) => setValue(e.target.value)} />
+        ) : (
+          <input
+            autoFocus
+            type="number"
+            inputMode="numeric"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            className="h-12 w-full rounded-xl bg-white/10 px-4 text-[16px] font-semibold outline-none focus:ring-2 focus:ring-primary"
+          />
+        )}
         {error && <p className="text-sm font-semibold text-red-400">{error}</p>}
         <div className="flex gap-2">
           <Button type="button" variant="secondary" className="flex-1" onClick={onCancel}>
