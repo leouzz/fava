@@ -59,6 +59,8 @@ export interface Album {
   category: string;
   language: string | null;
   series: string | null;
+  /** age range from the product page, e.g. "3-5" */
+  age?: string | null;
   sku: string | null;
   track_count: number;
   duration: number;

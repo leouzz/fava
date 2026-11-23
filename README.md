@@ -47,7 +47,9 @@ and Chromecast.
   shell, album pages and audio then work without network, seeking included.
 - **Search** across album and track titles, voices/authors and lyrics, with accents
   ignored. **Filters** for category (stories, songs, rhymes, learning), language,
-  series (Disney, PAW Patrol…), favourites and albums with lyrics.
+  the child's age (from the product page range, e.g. 3–5), series (Disney, PAW
+  Patrol…), favourites, albums with lyrics and downloaded albums. Each option
+  shows how many albums it leaves with the other filters applied.
 - **Chromecast** through the Google Cast Default Media Receiver, with the Remote
   Playback API as a fallback.
 - An option to skip the short Faba intro and outro jingles.

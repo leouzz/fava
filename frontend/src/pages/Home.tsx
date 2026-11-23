@@ -89,8 +89,8 @@ export function HomePage() {
       <Section title="🎧 Audiolibri in ascolto" albums={books} more="/audiobooks" />
       <Section title="I tuoi preferiti" albums={favorites} more="/library?favorites=1" />
       <Section title="Scopri" albums={discover} />
-      <Section title="📖 Storie" albums={byCat("stories").filter((a) => !mainLang || a.language === mainLang).slice(0, 20)} more="/library?category=stories" />
-      <Section title="🎵 Canzoni" albums={byCat("music").filter((a) => !mainLang || a.language === mainLang).slice(0, 20)} more="/library?category=music" />
+      <Section title="📖 Storie" albums={byCat("stories").filter((a) => !mainLang || a.language === mainLang).slice(0, 20)} more={`/library?category=stories${mainLang ? `&language=${mainLang}` : ""}`} />
+      <Section title="🎵 Canzoni" albums={byCat("music").filter((a) => !mainLang || a.language === mainLang).slice(0, 20)} more={`/library?category=music${mainLang ? `&language=${mainLang}` : ""}`} />
       <Section title="🧩 Imparare" albums={byCat("learning")} more="/library?category=learning" />
       <Section title="🌙 Filastrocche" albums={byCat("rhymes")} more="/library?category=rhymes" />
       {series.slice(0, 6).map((s) => (
