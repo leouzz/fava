@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
-import { api, type AudiobookAccess, type Profile } from "@/lib/api";
+import { api, type AudiobookAccess, type Profile, type ProfileInput } from "@/lib/api";
 import { useProfile } from "@/lib/profile";
 import { cn } from "@/lib/utils";
 import { AVATAR_COLORS, Avatar, FACES } from "./Avatar";
@@ -130,6 +130,9 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
   const [langs, setLangs] = useState<string[]>(profile?.languages ?? []);
   const [books, setBooks] = useState<AudiobookAccess>(profile?.audiobooks ?? "all");
   const [easy, setEasy] = useState(profile?.easy ?? false);
+  // PIN to leave Easy mode: keep the stored one, type a new one, or remove it
+  const [pinMode, setPinMode] = useState<"keep" | "set" | "remove">(profile?.pin ? "keep" : "set");
+  const [pin, setPin] = useState("");
   const { data: allLangs = [] } = useQuery({ queryKey: ["languages"], queryFn: api.languages });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,7 +147,9 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
     if (!name.trim()) return setError("Scrivi un nome");
     setBusy(true);
     try {
-      const body = { name: name.trim(), avatar, color, languages: langs, audiobooks: books, easy };
+      const body: ProfileInput = { name: name.trim(), avatar, color, languages: langs, audiobooks: books, easy };
+      if (pinMode === "remove") body.pin = "";
+      else if (pinMode === "set" && pin.trim()) body.pin = pin.trim();
       if (profile) {
         await api.updateProfile(profile.id, body);
         await qc.invalidateQueries({ queryKey: ["profiles"] });
@@ -254,7 +259,7 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
             <span className="block text-xs font-bold uppercase tracking-wider text-muted-foreground">Modalità Easy</span>
             <span className="block text-xs text-white/60">
               Per i più piccoli: si avvicina una tessera NFC e parte la storia, con pochi pulsanti grandi. Per uscire
-              serve la password genitori.
+              serve il PIN del profilo o la password genitori.
             </span>
           </span>
           <input
@@ -264,6 +269,44 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
             className="h-5 w-5 shrink-0 accent-[hsl(var(--primary))]"
           />
         </label>
+
+        {easy && (
+          <div className="px-5 pb-3">
+            <span className="block text-xs font-bold uppercase tracking-wider text-muted-foreground">PIN per uscire</span>
+            {pinMode === "keep" ? (
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="flex-1 text-sm text-white/80">PIN impostato</span>
+                <Button size="sm" variant="secondary" onClick={() => setPinMode("set")}>
+                  Cambia
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setPinMode("remove")}>
+                  Togli
+                </Button>
+              </div>
+            ) : pinMode === "remove" ? (
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="flex-1 text-sm text-white/60">Il PIN verrà tolto: per uscire servirà la password genitori.</span>
+                <Button size="sm" variant="ghost" onClick={() => setPinMode("keep")}>
+                  Annulla
+                </Button>
+              </div>
+            ) : (
+              <>
+                <input
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                  maxLength={32}
+                  autoComplete="off"
+                  placeholder={profile?.pin ? "Nuovo PIN (vuoto = lascia quello di prima)" : "Es. 1234 (facoltativo)"}
+                  className="mt-1.5 h-10 w-full rounded-xl bg-white/10 px-3 text-[16px] font-semibold outline-none placeholder:font-normal placeholder:text-white/40 focus:ring-2 focus:ring-primary"
+                />
+                <span className="mt-1 block text-xs text-white/50">
+                  Solo numeri: per uscire compare un tastierino. Va bene anche una parola.
+                </span>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-1 px-5">
           {(["faces", "figures"] as const).map((t) => (

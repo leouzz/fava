@@ -345,7 +345,10 @@ is active the phone shows Easy mode, across reloads and restarts too.
 - The only other controls are previous, play/pause and next. The screen is kept
   on, and the Android back gesture is ignored.
 - To leave, hold the lock in the top corner for 2 seconds, then enter the
-  parents' password (or answer a multiplication when FAVA has no passwords).
+  profile's **PIN** if it has one, or the parents' password (or answer a
+  multiplication when FAVA has no passwords). The PIN is set in the profile
+  editor and can be anything: digits only get a keypad that confirms on the last
+  digit. Wrong attempts are slowed down like passwords.
   The normal app opens on the same profile, with an "Easy mode paused" bar to
   go back. Easy mode returns by itself the next time the app is opened; to turn
   it off for good, edit the profile.

@@ -775,7 +775,8 @@ class ProfileIn(BaseModel):
     color: str = "#ff6b5e"
     languages: list[str] = []
     audiobooks: str = "all"  # all | kids | none
-    easy: bool = False       # Easy mode: NFC cards and big buttons, leaving needs the parents' password
+    easy: bool = False       # Easy mode: NFC cards and big buttons, leaving needs the PIN or parents' password
+    pin: str | None = None   # PIN to leave Easy mode: None = unchanged, "" = remove
 
 
 def _check_profile(p: ProfileIn) -> ProfileIn:
@@ -787,16 +788,24 @@ def _check_profile(p: ProfileIn) -> ProfileIn:
     p.languages = sorted({x for x in p.languages if re.fullmatch(r"[a-z]{2}", x)})
     if p.audiobooks not in ("all", "kids", "none"):
         raise HTTPException(400, "audiolibri: all, kids o none")
+    if p.pin is not None:
+        p.pin = p.pin.strip()
+        if len(p.pin) > 32:
+            raise HTTPException(400, "PIN troppo lungo")
     return p
 
 
 def _profiles(conn) -> list[dict]:
-    return [dict(r) | {"favorites": r["favs"], "languages": [x for x in (r["languages"] or "").split(",") if x],
-                       "easy": bool(r["easy"])}
-            for r in conn.execute(
-        "SELECT p.id, p.name, p.avatar, p.color, p.languages, p.audiobooks, p.easy, "
+    out = []
+    for r in conn.execute(
+        "SELECT p.id, p.name, p.avatar, p.color, p.languages, p.audiobooks, p.easy, p.pin, "
         "(SELECT COUNT(*) FROM profile_favorites f WHERE f.profile_id=p.id) AS favs "
-        "FROM profiles p ORDER BY p.id")]
+        "FROM profiles p ORDER BY p.id"):
+        d = {k: r[k] for k in r.keys() if k not in ("pin", "favs")}  # never the PIN hash
+        out.append(d | {"favorites": r["favs"], "easy": bool(r["easy"]),
+                        "languages": [x for x in (r["languages"] or "").split(",") if x],
+                        "pin": bool(r["pin"]), "pin_digits": auth.pin_digits(r["pin"])})
+    return out
 
 
 @app.get("/api/languages")
@@ -820,9 +829,10 @@ def create_profile(p: ProfileIn) -> dict:
     with db.session() as conn:
         if conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] >= 12:
             raise HTTPException(400, "massimo 12 profili")
-        cur = conn.execute("INSERT INTO profiles(name, avatar, color, languages, audiobooks, easy) "
-                           "VALUES(?,?,?,?,?,?)",
-                           (p.name, p.avatar, p.color, ",".join(p.languages) or None, p.audiobooks, int(p.easy)))
+        cur = conn.execute("INSERT INTO profiles(name, avatar, color, languages, audiobooks, easy, pin) "
+                           "VALUES(?,?,?,?,?,?,?)",
+                           (p.name, p.avatar, p.color, ",".join(p.languages) or None, p.audiobooks, int(p.easy),
+                            auth.hash_pin(p.pin) if p.pin else None))
         return {"id": cur.lastrowid}
 
 
@@ -834,6 +844,30 @@ def update_profile(pid: int, p: ProfileIn) -> dict:
                             "WHERE id=?", (p.name, p.avatar, p.color, ",".join(p.languages) or None,
                                            p.audiobooks, int(p.easy), pid)).rowcount:
             raise HTTPException(404)
+        if p.pin is not None:
+            conn.execute("UPDATE profiles SET pin=? WHERE id=?", (auth.hash_pin(p.pin) if p.pin else None, pid))
+    return {"ok": True}
+
+
+class UnlockIn(BaseModel):
+    profile_id: int
+    secret: str  # the profile's PIN or the parents' password
+
+
+@app.post("/api/easy/unlock")
+def easy_unlock(body: UnlockIn, request: Request) -> dict:
+    """Leave Easy mode: the profile's PIN, or the parents' password, opens the normal app."""
+    ip = request.client.host if request.client else "?"
+    auth.throttle(ip)
+    with db.session() as conn:
+        r = conn.execute("SELECT pin FROM profiles WHERE id=?", (body.profile_id,)).fetchone()
+    ok = bool(r and auth.check_pin(r["pin"], body.secret.strip()))
+    if not ok and auth.enabled():
+        ok = auth.check_password(body.secret) == "admin"
+    if not ok:
+        auth.failed(ip)
+        raise HTTPException(401, "PIN errato" if r and r["pin"] else "Password errata")
+    auth.reset(ip)
     return {"ok": True}
 
 

@@ -97,6 +97,29 @@ def check_password(password: str) -> str | None:
     return None
 
 
+def hash_pin(pin: str) -> str:
+    """Stored form of a profile PIN: "<digits length or t>$<salt>$<pbkdf2>". The
+    first field lets the Easy mode show a keypad that confirms on the last digit."""
+    kind = str(len(pin)) if pin.isdigit() else "t"
+    salt = secrets.token_hex(8)
+    digest = hashlib.pbkdf2_hmac("sha256", pin.encode(), salt.encode(), 100_000).hex()
+    return f"{kind}${salt}${digest}"
+
+
+def check_pin(stored: str | None, pin: str) -> bool:
+    if not stored or stored.count("$") != 2:
+        return False
+    _kind, salt, digest = stored.split("$")
+    got = hashlib.pbkdf2_hmac("sha256", pin.encode(), salt.encode(), 100_000).hex()
+    return hmac.compare_digest(got, digest)
+
+
+def pin_digits(stored: str | None) -> int | None:
+    """Length of a numeric PIN (None when there is no PIN or it has other characters)."""
+    kind = (stored or "").split("$")[0]
+    return int(kind) if kind.isdigit() else None
+
+
 def throttle(ip: str) -> None:
     """Slow down / lock out repeated wrong passwords (per client IP)."""
     now = time.time()

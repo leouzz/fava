@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS u.profiles (
     languages   TEXT,                                -- "it,fr" (NULL = all)
     audiobooks  TEXT NOT NULL DEFAULT 'all',             -- all | kids | none
     easy        INTEGER NOT NULL DEFAULT 0,          -- 1 = Easy mode (NFC cards, big buttons)
+    pin         TEXT,                                -- hashed PIN to leave Easy mode (auth.hash_pin)
     created_at  TEXT DEFAULT (datetime('now'))
 );
 
@@ -196,7 +197,7 @@ CANDIDATE_MIGRATIONS = {"data": "TEXT"}
 TRACK_MIGRATIONS = {"chapters": "TEXT"}
 
 PROFILE_MIGRATIONS = {"languages": "TEXT", "audiobooks": "TEXT NOT NULL DEFAULT 'all'",
-                      "easy": "INTEGER NOT NULL DEFAULT 0"}
+                      "easy": "INTEGER NOT NULL DEFAULT 0", "pin": "TEXT"}
 
 _lock = threading.Lock()
 

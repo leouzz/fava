@@ -9,9 +9,16 @@ export interface Profile {
   favorites: number;
   languages: string[];
   audiobooks: AudiobookAccess;
-  /** Easy mode: NFC cards and big buttons, leaving needs the parents' password */
+  /** Easy mode: NFC cards and big buttons, leaving needs the PIN or the parents' password */
   easy: boolean;
+  /** a PIN to leave Easy mode is set */
+  pin: boolean;
+  /** length of a numeric PIN (the keypad confirms on the last digit); null for other PINs */
+  pin_digits: number | null;
 }
+
+/** Profile fields sent when saving. pin: omitted = unchanged, "" = remove. */
+export type ProfileInput = Omit<Profile, "id" | "favorites" | "pin" | "pin_digits"> & { pin?: string };
 
 /** Which audiobooks a profile sees. */
 export type AudiobookAccess = "all" | "kids" | "none";
@@ -339,19 +346,25 @@ export const api = {
     }),
   logout: () => req("/api/auth/logout", { method: "POST" }),
   languages: () => req<{ items: Facet[] }>("/api/languages").then((r) => r.items),
-  createProfile: (p: Omit<Profile, "id" | "favorites">) =>
+  createProfile: (p: ProfileInput) =>
     req<{ id: number }>("/api/profiles", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(p),
     }),
-  updateProfile: (id: number, p: Omit<Profile, "id" | "favorites">) =>
+  updateProfile: (id: number, p: ProfileInput) =>
     req(`/api/profiles/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(p),
     }),
   deleteProfile: (id: number) => req(`/api/profiles/${id}`, { method: "DELETE" }),
+  easyUnlock: (profileId: number, secret: string) =>
+    req<{ ok: boolean }>("/api/easy/unlock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_id: profileId, secret }),
+    }),
   checkAdmin: (password: string) =>
     req<{ ok: boolean }>("/api/auth/check", {
       method: "POST",
