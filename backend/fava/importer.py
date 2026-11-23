@@ -398,9 +398,12 @@ def _upsert_candidate(conn, fid, source, url, name, image: Path, score, status) 
 
 
 def _link(conn, fid: str, source: str, url: str, method: str) -> None:
+    # a page linked by hand is never replaced by an automatic match
     conn.execute("INSERT INTO album_links(album_id, source, url, method) VALUES(?,?,?,?) "
                  "ON CONFLICT(album_id) DO UPDATE SET source=excluded.source, url=excluded.url, "
-                 "method=excluded.method", (fid, source, url, method))
+                 "method=excluded.method "
+                 "WHERE excluded.method='manual' OR COALESCE(album_links.method, '')<>'manual'",
+                 (fid, source, url, method))
 
 
 def _covers_phase(conn, st: ImportState, reg, srcs, issue) -> None:
@@ -556,54 +559,148 @@ def _details_phase(conn, st: ImportState, reg, srcs, issue) -> None:
     try:
         for i, ln in enumerate(links):
             st.done += 1
-            fid = ln["album_id"]
-            info = cache.get(ln["url"])
+            titled += apply_details(conn, ln["album_id"], ln["url"], cache.get(ln["url"]))
             if (i + 1) % 10 == 0:
                 cache.save()
-            sections = [s for s in info.get("sections", []) if s.get("items")]
-            conn.execute("UPDATE albums SET description=?, age=?, contents=?, product_url=? WHERE id=?",
-                         (info.get("description"), info.get("age"),
-                          json.dumps(sections, ensure_ascii=False) if sections else None, ln["url"], fid))
-            text = " ".join([info.get("description") or ""] + [i for s in sections for i in s["items"]])
-            if text.strip():
-                conn.execute("INSERT INTO search(album_id, track_id, kind, text) VALUES(?,?,?,?)",
-                             (fid, None, "info", text))
-            # track titles: only when the mapping is unambiguous
-            tracks = conn.execute("SELECT id, idx, title_source, duration FROM tracks WHERE album_id=? "
-                                  "AND is_extra=0 ORDER BY idx", (fid,)).fetchall()
-            if not tracks or not any(t["title_source"] == "generic" for t in tracks):
-                continue
-            items = [re.sub(r"\s*\.\.\.$", "…", i) for s in sections for i in s["items"]]
-            # undetected Faba jingles: short extra tracks at the start / end
-            extra = len(tracks) - len(items)
-            if items and extra in (1, 2) and len(items) > 1:
-                ends = [tracks[0]] + ([tracks[-1]] if extra == 2 else [])
-                if all((t["duration"] or 0) < 45 for t in ends):
-                    for t in ends:
-                        conn.execute("UPDATE tracks SET is_extra=1, title=?, title_source='detected' WHERE id=?",
-                                     ("Intro Faba" if t is tracks[0] else "Outro Faba", t["id"]))
-                    tracks = tracks[1:len(tracks) - (1 if extra == 2 else 0)]
-            names: list[str] | None = None
-            if len({catalog._norm(i) for i in items}) < len(items):
-                continue  # repeated entries: a content summary, not a tracklist
-            if len(items) == len(tracks):
-                names = items
-            elif len(items) == 1 and len(tracks) > 1:
-                names = [f"{items[0]} · parte {n}" for n in range(1, len(tracks) + 1)]
-            if not names:
-                continue
-            for t, name in zip(tracks, names):
-                if t["title_source"] != "generic":
-                    continue
-                conn.execute("UPDATE tracks SET title=?, title_source='catalog' WHERE id=?", (name, t["id"]))
-                conn.execute("INSERT INTO search(album_id, track_id, kind, text) VALUES(?,?,?,?)",
-                             (fid, t["id"], "track", name))
-                titled += 1
     except Exception as e:
         log.warning("details lookup failed: %s", e)
     finally:
         cache.save()
     st.emit(f"Dettagli online: {sum(1 for _ in links)} album, {titled} titoli di traccia aggiunti")
+
+
+def apply_details(conn, fid: str, url: str, info: dict) -> int:
+    """Store description, age and contents of a product page on an album, and
+    name its generic tracks when the mapping is unambiguous. Returns the number
+    of track titles set."""
+    sections = [s for s in info.get("sections", []) if s.get("items")]
+    conn.execute("UPDATE albums SET description=?, age=?, contents=?, product_url=? WHERE id=?",
+                 (info.get("description"), info.get("age"),
+                  json.dumps(sections, ensure_ascii=False) if sections else None, url, fid))
+    text = " ".join([info.get("description") or ""] + [i for s in sections for i in s["items"]])
+    if text.strip():
+        conn.execute("INSERT INTO search(album_id, track_id, kind, text) VALUES(?,?,?,?)",
+                     (fid, None, "info", text))
+    # track titles: only when the mapping is unambiguous
+    tracks = conn.execute("SELECT id, idx, title_source, duration FROM tracks WHERE album_id=? "
+                          "AND is_extra=0 ORDER BY idx", (fid,)).fetchall()
+    if not tracks or not any(t["title_source"] == "generic" for t in tracks):
+        return 0
+    items = [re.sub(r"\s*\.\.\.$", "…", i) for s in sections for i in s["items"]]
+    # undetected Faba jingles: short extra tracks at the start / end
+    extra = len(tracks) - len(items)
+    if items and extra in (1, 2) and len(items) > 1:
+        ends = [tracks[0]] + ([tracks[-1]] if extra == 2 else [])
+        if all((t["duration"] or 0) < 45 for t in ends):
+            for t in ends:
+                conn.execute("UPDATE tracks SET is_extra=1, title=?, title_source='detected' WHERE id=?",
+                             ("Intro Faba" if t is tracks[0] else "Outro Faba", t["id"]))
+            tracks = tracks[1:len(tracks) - (1 if extra == 2 else 0)]
+    if len({catalog._norm(i) for i in items}) < len(items):
+        return 0  # repeated entries: a content summary, not a tracklist
+    names: list[str] | None = None
+    if len(items) == len(tracks):
+        names = items
+    elif len(items) == 1 and len(tracks) > 1:
+        names = [f"{items[0]} · parte {n}" for n in range(1, len(tracks) + 1)]
+    if not names:
+        return 0
+    titled = 0
+    for t, name in zip(tracks, names):
+        if t["title_source"] != "generic":
+            continue
+        conn.execute("UPDATE tracks SET title=?, title_source='catalog' WHERE id=?", (name, t["id"]))
+        conn.execute("INSERT INTO search(album_id, track_id, kind, text) VALUES(?,?,?,?)",
+                     (fid, t["id"], "track", name))
+        titled += 1
+    return titled
+
+
+def link_source(url: str) -> str | None:
+    """Which kind of shop a product URL belongs to: "myfaba" for the official
+    stores, the host name for the configured retailers, None otherwise (only
+    these are fetched: the server never requests arbitrary addresses)."""
+    from urllib.parse import urlparse
+
+    def host(u: str) -> str:
+        return (urlparse(u).hostname or "").lower().removeprefix("www.")
+
+    p = urlparse(url)
+    h = host(url)
+    if p.scheme not in ("http", "https") or not h:
+        return None
+    if h in {host(s) for s in settings.catalog_stores} or re.fullmatch(r"myfaba\.[a-z]{2,3}", h):
+        return "myfaba"
+    if h in {host(s) for s in settings.retailer_sitemaps}:
+        return h
+    return None
+
+
+def link_manual(conn, fid: str, url: str) -> dict:
+    """Link a figure to a product page chosen by hand and sync everything from it:
+    picture (unless a booklet or hand-uploaded one exists), description, age,
+    contents and track titles. The choice survives re-imports."""
+    source = link_source(url)
+    if not source:
+        raise ValueError("Indirizzo non supportato: usa una scheda di myfaba o di un rivenditore configurato")
+    url = url.split("#")[0].split("?")[0]
+    row = conn.execute("SELECT id, has_cover, cover_source FROM albums WHERE id=? AND kind='faba'",
+                       (fid,)).fetchone()
+    if not row:
+        raise LookupError(fid)
+
+    # fresh copies: the user is asking to sync now
+    details = catalog.DetailsCache()
+    details.data.pop(url, None)
+    info = details.get(url)
+    details.save()
+    if info.get("error"):
+        raise ValueError(f"Pagina non raggiungibile: {info['error']}")
+    name, images = None, []
+    if source == "myfaba":
+        products = catalog._ProductCache()
+        products.data.pop(url, None)
+        p = catalog.product(products, url) or {}
+        products.save()
+        name, images = p.get("name"), p.get("images") or ([p["image"]] if p.get("image") else [])
+    else:
+        hit = next((r for r in catalog.load_retailers() if r["url"].rstrip("/") == url.rstrip("/")), None)
+        if hit:
+            name, images = hit["name"].capitalize(), hit["images"]
+    name = name or info.get("name")
+    if not images and info.get("image"):
+        images = [info["image"]]
+    if not (name or info.get("description") or info.get("sections") or images):
+        raise ValueError("Non sembra una scheda prodotto: nessuna informazione trovata")
+
+    img = catalog.pick_image(images)[0] if images else None
+
+    # the chosen product replaces any earlier suggestion for this figure
+    conn.execute("UPDATE cover_candidates SET status='rejected' WHERE album_id=? AND product_url<>? "
+                 "AND status IN ('pending','auto','accepted')", (fid, url))
+    if img:
+        conn.execute(
+            "INSERT INTO cover_candidates(album_id, source, product_url, product_name, image, score, status) "
+            "VALUES(?,?,?,?,?,NULL,'accepted') ON CONFLICT(album_id, product_url) DO UPDATE SET "
+            "source=excluded.source, product_name=excluded.product_name, image=excluded.image, "
+            "status='accepted'", (fid, source, url, name, img.name))
+    else:  # an earlier rejection of this page must not undo the link at the next import
+        conn.execute("DELETE FROM cover_candidates WHERE album_id=? AND product_url=?", (fid, url))
+    cover = False
+    if img and (not row["has_cover"] or row["cover_source"] in ("catalog", "retailer")):
+        _set_cover(conn, fid, img, "catalog" if source == "myfaba" else "retailer")
+        cover = True
+    _link(conn, fid, source, url, "manual")
+
+    # titles from an earlier link go back to generic, then the new page names them
+    old = conn.execute("SELECT id FROM tracks WHERE album_id=? AND title_source='catalog'", (fid,)).fetchall()
+    for t in old:
+        conn.execute("UPDATE tracks SET title='Traccia ' || idx, title_source='generic' WHERE id=?", (t[0],))
+        conn.execute("DELETE FROM search WHERE track_id=? AND kind='track'", (t[0],))
+    conn.execute("DELETE FROM search WHERE album_id=? AND kind='info'", (fid,))
+    titled = apply_details(conn, fid, url, info)
+    return {"name": name, "cover": cover, "titles": titled,
+            "description": bool(info.get("description")), "age": info.get("age")}
 
 
 # --------------------------------------------------------------------------- audiobooks

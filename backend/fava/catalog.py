@@ -566,6 +566,11 @@ class DetailsCache:
         try:
             page = _get(url, timeout=30).decode("utf-8", "replace")
             info = _parse_myfaba(page) if "myfaba." in url else _parse_retailer(page)
+            for key, prop in (("name", "og:title"), ("image", "og:image")):
+                m = re.search(rf'<meta[^>]+property="{prop}"[^>]+content="([^"]+)"', page) or \
+                    re.search(rf'<meta[^>]+content="([^"]+)"[^>]+property="{prop}"', page)
+                if m:
+                    info[key] = html.unescape(m.group(1)).strip()
         except Exception as e:
             log.info("details %s failed: %s", url, e)
             info = {"error": str(e), "sections": []}

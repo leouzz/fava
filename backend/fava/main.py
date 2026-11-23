@@ -532,6 +532,24 @@ def book_apply(album_id: str, cid: int) -> dict:
     return {"ok": True}
 
 
+class LinkIn(BaseModel):
+    url: str
+
+
+@app.post("/api/albums/{album_id}/online-link")
+def figure_link(album_id: str, body: LinkIn) -> dict:
+    """Link a figure to a product page by hand (parents only) and sync its info."""
+    if importer.state.running:
+        raise HTTPException(409, "Import in corso: riprova quando è finito")
+    try:
+        with db.session() as conn:
+            return importer.link_manual(conn, album_id, body.url.strip())
+    except LookupError:
+        raise HTTPException(404)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/albums/{album_id}/online-clear")
 def book_clear(album_id: str) -> dict:
     """Forget the online match: what it filled goes away and it is not searched again."""

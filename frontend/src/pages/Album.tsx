@@ -9,14 +9,16 @@ import {
   Heart,
   ImagePlus,
   Info,
+  Link2,
   Loader2,
   Pause,
   Play,
+  RefreshCw,
   RotateCcw,
   Shuffle,
   Text,
 } from "lucide-react";
-import { api, type AlbumDetail, type Track } from "@/lib/api";
+import { ApiError, api, type AlbumDetail, type Track } from "@/lib/api";
 import { CATEGORY, LANGUAGE, albumColor, cn, fmtDuration, fmtTime } from "@/lib/utils";
 import { Cover } from "@/components/Cover";
 import { Button } from "@/components/ui/button";
@@ -345,7 +347,80 @@ export function AdminCover({ album }: { album: AlbumDetail }) {
           Rimuovi copertina manuale
         </Button>
       )}
+      {album.kind !== "audiobook" && <FigureLink album={album} />}
       <input ref={input} type="file" accept="image/*" className="hidden" onChange={(e) => upload(e.target.files?.[0])} />
     </div>
+  );
+}
+
+/** Parents: paste the figure's page on myfaba (or a retailer) to sync its picture and info. */
+function FigureLink({ album }: { album: AlbumDetail }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState(album.product_url ?? "");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const sync = async (target: string) => {
+    if (!target.trim()) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api.figureLink(album.id, target.trim());
+      const got = [
+        r.cover && "immagine",
+        r.description && "descrizione",
+        r.age && "età",
+        r.titles > 0 && `${r.titles} titoli`,
+      ].filter(Boolean);
+      setMsg({ ok: true, text: `${r.name ? `«${r.name}»: ` : ""}${got.length ? got.join(", ") : "collegata, nessuna novità"}` });
+      setOpen(false);
+      qc.invalidateQueries();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof ApiError ? e.message : "Collegamento non riuscito" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      {album.product_url && !open ? (
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => sync(album.product_url!)}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Sincronizza scheda
+        </Button>
+      ) : null}
+      {!open && (
+        <Button size="sm" variant={album.product_url ? "ghost" : "secondary"} disabled={busy} onClick={() => setOpen(true)}>
+          <Link2 className="h-4 w-4" /> {album.product_url ? "Cambia scheda" : "Collega scheda"}
+        </Button>
+      )}
+      {open && (
+        <form
+          className="flex w-full flex-wrap gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            sync(url);
+          }}
+        >
+          <input
+            type="url"
+            autoFocus
+            required
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://www.myfaba.it/nome-statuina/"
+            className="min-w-0 flex-1 basis-60 rounded-full bg-secondary px-4 py-2 text-sm outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-primary"
+          />
+          <Button size="sm" type="submit" disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />} Collega
+          </Button>
+          <Button size="sm" type="button" variant="ghost" disabled={busy} onClick={() => setOpen(false)}>
+            Annulla
+          </Button>
+        </form>
+      )}
+      {msg && <p className={cn("w-full text-xs", msg.ok ? "text-muted-foreground" : "text-red-400")}>{msg.text}</p>}
+    </>
   );
 }

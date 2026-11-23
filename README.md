@@ -232,6 +232,15 @@ Only the sitemap is read; it already lists every product's images. Two outcomes:
 Automatic covers can be undone there too ("Non è lei"). Decisions are remembered
 across imports.
 
+**Linking a figure by hand.** When the right page isn't found, a parent can open
+the album, tap **Collega scheda** (next to "Aggiungi copertina") and paste the
+product page, e.g. `https://www.myfaba.it/peter-pan-e-un-altra-storia/`. FAVA
+reads it straight away: picture (unless the album has a booklet or hand-uploaded
+one), description, age range, contents and the titles of generic `Traccia N`
+tracks. Only myfaba stores and the configured retailers are accepted. The link
+wins over automatic matches and survives re-imports. **Sincronizza scheda**
+reads the linked page again.
+
 **Manual covers.** Put `asset/covers/K0010.png` (or `0010.jpg`, `.webp`) to force a
 picture for any album. Manual covers always win.
 

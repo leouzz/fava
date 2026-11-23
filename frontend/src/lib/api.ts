@@ -292,6 +292,12 @@ export const api = {
   bookApply: (albumId: string, candidateId: number) =>
     req(`/api/albums/${albumId}/online-apply/${candidateId}`, { method: "POST" }),
   bookClear: (albumId: string) => req(`/api/albums/${albumId}/online-clear`, { method: "POST" }),
+  /** Link a figure to its product page by hand and sync picture, description and track titles. */
+  figureLink: (albumId: string, url: string) =>
+    req<{ name: string | null; cover: boolean; titles: number; description: boolean; age: string | null }>(
+      `/api/albums/${albumId}/online-link`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) },
+    ),
   resetProgress: (albumId: string) => req(`/api/progress/${albumId}`, { method: "DELETE" }),
   setAudience: (albumId: string, audience: Audience | null) =>
     req(`/api/albums/${albumId}/audience`, {
