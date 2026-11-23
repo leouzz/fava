@@ -18,8 +18,20 @@ from .config import settings
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("fava")
 
+class _GZip(GZipMiddleware):
+    """Never gzip audio: it doesn't shrink, and it breaks Range responses (no
+    Content-Length, Content-Range no longer matches the body). Browsers ask for
+    `identity` on media, but proxies like Cloudflare always ask the origin for gzip."""
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].startswith("/api/stream/"):
+            await self.app(scope, receive, send)
+        else:
+            await super().__call__(scope, receive, send)
+
+
 app = FastAPI(title="FAVA", version="0.1.0")
-app.add_middleware(GZipMiddleware, minimum_size=2048)
+app.add_middleware(_GZip, minimum_size=2048)
 app.middleware("http")(auth.middleware)
 app.include_router(uploads.router)
 
