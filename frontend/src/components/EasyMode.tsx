@@ -6,8 +6,8 @@
  * and then opens the normal app on this profile. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Delete, Loader2, Lock, Nfc, Pause, Play, RotateCcw, SkipBack, SkipForward } from "lucide-react";
-import { api, ApiError, type AlbumDetail, type NfcTag, type Profile } from "@/lib/api";
+import { Loader2, Lock, Nfc, Pause, Play, RotateCcw, SkipBack, SkipForward } from "lucide-react";
+import { api, ApiError, type AlbumDetail, type NfcTag } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useEasy } from "@/lib/easy";
 import { fmtUid, listenNfc, NfcError, nfcUnavailableReason } from "@/lib/nfc";
@@ -16,6 +16,7 @@ import { player } from "@/player/engine";
 import { current, usePlayer } from "@/player/store";
 import { Cover } from "./Cover";
 import { useActiveProfile } from "./ProfilePicker";
+import { PinPad } from "./PinPad";
 import { NfcWaves, useNfcTags } from "./NfcPair";
 import { Button } from "./ui/button";
 import { PasswordInput } from "./ui/password-input";
@@ -347,118 +348,8 @@ function HoldToUnlock({ onUnlock }: { onUnlock: () => void }) {
 
 function ExitDialog({ onCancel, onExit }: { onCancel: () => void; onExit: () => void }) {
   const profile = useActiveProfile();
-  const [password, setPassword] = useState(false);
-  if (profile?.pin && !password)
-    return <PinDialog profile={profile} onCancel={onCancel} onExit={onExit} onPassword={() => setPassword(true)} />;
+  if (profile?.pin) return <PinPad profile={profile} title="Uscire dalla modalità Easy?" onCancel={onCancel} onSuccess={onExit} />;
   return <PasswordDialog onCancel={onCancel} onExit={onExit} />;
-}
-
-/** The profile's PIN: a keypad for numeric PINs (confirms on the last digit), a field otherwise. */
-function PinDialog({
-  profile,
-  onCancel,
-  onExit,
-  onPassword,
-}: {
-  profile: Profile;
-  onCancel: () => void;
-  onExit: () => void;
-  onPassword: () => void;
-}) {
-  const digits = profile.pin_digits;
-  const [value, setValue] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (pin: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.easyUnlock(profile.id, pin);
-      onExit();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
-      setValue("");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const press = (d: string) => {
-    if (busy || !digits) return;
-    const next = (value + d).slice(0, digits);
-    setValue(next);
-    setError(null);
-    if (next.length === digits) void submit(next);
-  };
-
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 px-6">
-      <div className="w-full max-w-xs space-y-4 rounded-3xl bg-card p-5">
-        <div>
-          <h2 className="text-lg font-black">Uscire dalla modalità Easy?</h2>
-          <p className="text-sm text-muted-foreground">PIN di {profile.name}</p>
-        </div>
-        {digits ? (
-          <>
-            <div className="flex h-6 items-center justify-center gap-3">
-              {busy ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                Array.from({ length: digits }, (_, i) => (
-                  <span key={i} className={cn("h-3.5 w-3.5 rounded-full", i < value.length ? "bg-primary" : "bg-white/20")} />
-                ))
-              )}
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
-                <PinKey key={d} onClick={() => press(d)} disabled={busy}>
-                  {d}
-                </PinKey>
-              ))}
-              <span />
-              <PinKey onClick={() => press("0")} disabled={busy}>
-                0
-              </PinKey>
-              <PinKey aria-label="Cancella" onClick={() => setValue((v) => v.slice(0, -1))} disabled={busy || !value}>
-                <Delete className="h-6 w-6" />
-              </PinKey>
-            </div>
-          </>
-        ) : (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (value) void submit(value);
-            }}
-          >
-            <PasswordInput autoFocus value={value} onChange={(e) => setValue(e.target.value)} />
-            <Button type="submit" className="mt-3 w-full" disabled={busy || !value}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Esci"}
-            </Button>
-          </form>
-        )}
-        {error && <p className="text-center text-sm font-semibold text-red-400">{error}</p>}
-        <div className="flex items-center justify-between">
-          <button type="button" onClick={onPassword} className="text-xs font-semibold text-muted-foreground hover:text-foreground">
-            Usa la password genitori
-          </button>
-          <Button type="button" variant="secondary" size="sm" onClick={onCancel}>
-            Annulla
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PinKey(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      type="button"
-      {...props}
-      className="flex h-14 items-center justify-center rounded-2xl bg-white/10 text-2xl font-bold transition active:scale-95 active:bg-white/20 disabled:opacity-40"
-    />
-  );
 }
 
 function PasswordDialog({ onCancel, onExit }: { onCancel: () => void; onExit: () => void }) {

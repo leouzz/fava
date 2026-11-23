@@ -787,7 +787,8 @@ class ProfileIn(BaseModel):
     languages: list[str] = []
     audiobooks: str = "all"  # all | kids | none
     easy: bool = False       # Easy mode: NFC cards and big buttons, leaving needs the PIN or parents' password
-    pin: str | None = None   # PIN to leave Easy mode: None = unchanged, "" = remove
+    pin: str | None = None   # profile PIN: None = unchanged, "" = remove
+    pin_login: bool = False  # ask the PIN when switching to this profile
 
 
 def _check_profile(p: ProfileIn) -> ProfileIn:
@@ -809,13 +810,14 @@ def _check_profile(p: ProfileIn) -> ProfileIn:
 def _profiles(conn) -> list[dict]:
     out = []
     for r in conn.execute(
-        "SELECT p.id, p.name, p.avatar, p.color, p.languages, p.audiobooks, p.easy, p.pin, "
+        "SELECT p.id, p.name, p.avatar, p.color, p.languages, p.audiobooks, p.easy, p.pin, p.pin_login, "
         "(SELECT COUNT(*) FROM profile_favorites f WHERE f.profile_id=p.id) AS favs "
         "FROM profiles p ORDER BY p.id"):
         d = {k: r[k] for k in r.keys() if k not in ("pin", "favs")}  # never the PIN hash
         out.append(d | {"favorites": r["favs"], "easy": bool(r["easy"]),
                         "languages": [x for x in (r["languages"] or "").split(",") if x],
-                        "pin": bool(r["pin"]), "pin_digits": auth.pin_digits(r["pin"])})
+                        "pin": bool(r["pin"]), "pin_digits": auth.pin_digits(r["pin"]),
+                        "pin_login": bool(r["pin"] and r["pin_login"])})
     return out
 
 
@@ -840,10 +842,10 @@ def create_profile(p: ProfileIn) -> dict:
     with db.session() as conn:
         if conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] >= 12:
             raise HTTPException(400, "massimo 12 profili")
-        cur = conn.execute("INSERT INTO profiles(name, avatar, color, languages, audiobooks, easy, pin) "
-                           "VALUES(?,?,?,?,?,?,?)",
+        cur = conn.execute("INSERT INTO profiles(name, avatar, color, languages, audiobooks, easy, pin, pin_login) "
+                           "VALUES(?,?,?,?,?,?,?,?)",
                            (p.name, p.avatar, p.color, ",".join(p.languages) or None, p.audiobooks, int(p.easy),
-                            auth.hash_pin(p.pin) if p.pin else None))
+                            auth.hash_pin(p.pin) if p.pin else None, int(p.pin_login and bool(p.pin))))
         return {"id": cur.lastrowid}
 
 
@@ -857,6 +859,9 @@ def update_profile(pid: int, p: ProfileIn) -> dict:
             raise HTTPException(404)
         if p.pin is not None:
             conn.execute("UPDATE profiles SET pin=? WHERE id=?", (auth.hash_pin(p.pin) if p.pin else None, pid))
+        # without a PIN there is nothing to ask
+        conn.execute("UPDATE profiles SET pin_login=? WHERE id=?", (int(p.pin_login), pid))
+        conn.execute("UPDATE profiles SET pin_login=0 WHERE id=? AND pin IS NULL", (pid,))
     return {"ok": True}
 
 
@@ -865,9 +870,9 @@ class UnlockIn(BaseModel):
     secret: str  # the profile's PIN or the parents' password
 
 
-@app.post("/api/easy/unlock")
-def easy_unlock(body: UnlockIn, request: Request) -> dict:
-    """Leave Easy mode: the profile's PIN, or the parents' password, opens the normal app."""
+@app.post("/api/pin/check")
+def pin_check(body: UnlockIn, request: Request) -> dict:
+    """A profile's PIN (or the parents' password): entering a locked profile, leaving Easy mode."""
     ip = request.client.host if request.client else "?"
     auth.throttle(ip)
     with db.session() as conn:

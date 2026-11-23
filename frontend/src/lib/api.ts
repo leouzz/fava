@@ -11,8 +11,10 @@ export interface Profile {
   audiobooks: AudiobookAccess;
   /** Easy mode: NFC cards and big buttons, leaving needs the PIN or the parents' password */
   easy: boolean;
-  /** a PIN to leave Easy mode is set */
+  /** the profile has a PIN (asked to leave Easy mode, and to enter it when pin_login) */
   pin: boolean;
+  /** ask the PIN when switching to this profile */
+  pin_login: boolean;
   /** length of a numeric PIN (the keypad confirms on the last digit); null for other PINs */
   pin_digits: number | null;
 }
@@ -379,8 +381,9 @@ export const api = {
       body: JSON.stringify(p),
     }),
   deleteProfile: (id: number) => req(`/api/profiles/${id}`, { method: "DELETE" }),
-  easyUnlock: (profileId: number, secret: string) =>
-    req<{ ok: boolean }>("/api/easy/unlock", {
+  /** Check a profile's PIN (or the parents' password): entering a locked profile, leaving Easy mode. */
+  pinCheck: (profileId: number, secret: string) =>
+    req<{ ok: boolean }>("/api/pin/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ profile_id: profileId, secret }),

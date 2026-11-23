@@ -32,7 +32,11 @@ and Chromecast.
 - **Profiles**, Netflix-style ("Chi ascolta?"). Each profile has its own
   favourites and resume positions. The avatar is a stylised face or any figure
   from your library, on a colour of your choice. The active profile is remembered
-  per device.
+  per device. A profile can have a **PIN** (anything: digits get a keypad); with
+  *Chiedi il PIN per entrare* it is asked before switching to that profile, and
+  it is always asked to leave Easy mode. The parents' password works instead of
+  any PIN. It is a family lock, not account security: the server does not tie
+  requests to a profile.
 - **Per-profile languages.** A profile can be limited to some languages; Home,
   Library, search and counts follow it.
 - **Online details.** Description, age range and contents come from the matched

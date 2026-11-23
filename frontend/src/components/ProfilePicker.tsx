@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
 import { api, type AudiobookAccess, type Profile, type ProfileInput } from "@/lib/api";
 import { useProfile } from "@/lib/profile";
 import { cn } from "@/lib/utils";
@@ -8,6 +8,7 @@ import { AVATAR_COLORS, Avatar, FACES } from "./Avatar";
 import { Button } from "./ui/button";
 import { isAdmin, useAuth } from "@/lib/auth";
 import { PasswordForm } from "./AuthGate";
+import { PinPad } from "./PinPad";
 import { LANGUAGE } from "@/lib/utils";
 
 /** Resolves the active profile and shows the picker when needed. */
@@ -48,6 +49,12 @@ function ProfilePicker({ profiles }: { profiles: Profile[] }) {
   const canClose = profiles.some((p) => p.id === current);
   const admin = isAdmin(useAuth((s) => s.status));
   const [unlock, setUnlock] = useState(false);
+  const [asking, setAsking] = useState<Profile | null>(null);
+  const choose = (p: Profile) => {
+    if (manage) return setEditing(p);
+    if (p.pin_login && p.id !== current) return setAsking(p);
+    useProfile.getState().set(p.id);
+  };
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col items-center overflow-y-auto bg-background px-6 pb-10 pt-[calc(var(--safe-top)+3rem)]">
@@ -65,7 +72,7 @@ function ProfilePicker({ profiles }: { profiles: Profile[] }) {
         {profiles.map((p) => (
           <button
             key={p.id}
-            onClick={() => (manage ? setEditing(p) : useProfile.getState().set(p.id))}
+            onClick={() => choose(p)}
             className="group flex flex-col items-center gap-3"
           >
             <span className="relative w-full max-w-[9rem] transition-transform group-active:scale-95">
@@ -78,6 +85,7 @@ function ProfilePicker({ profiles }: { profiles: Profile[] }) {
             </span>
             <span className="flex max-w-full items-center gap-1.5 text-base font-bold text-white/85 group-hover:text-white">
               <span className="truncate">{p.name}</span>
+              {p.pin_login && <Lock className="h-3.5 w-3.5 shrink-0 text-white/50" aria-label="Protetto da PIN" />}
               {p.easy && <span className="shrink-0 rounded bg-primary/25 px-1.5 text-[10px] font-black uppercase text-primary">Easy</span>}
             </span>
           </button>
@@ -103,6 +111,17 @@ function ProfilePicker({ profiles }: { profiles: Profile[] }) {
         <Button variant="outline" className="mt-12" onClick={() => setUnlock(true)}>
           Gestisci profili
         </Button>
+      )}
+      {asking && (
+        <PinPad
+          profile={asking}
+          title={`Entrare come ${asking.name}?`}
+          onCancel={() => setAsking(null)}
+          onSuccess={() => {
+            setAsking(null);
+            useProfile.getState().set(asking.id);
+          }}
+        />
       )}
       {editing && (
         <ProfileEditor
@@ -133,6 +152,8 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
   // PIN to leave Easy mode: keep the stored one, type a new one, or remove it
   const [pinMode, setPinMode] = useState<"keep" | "set" | "remove">(profile?.pin ? "keep" : "set");
   const [pin, setPin] = useState("");
+  const [pinLogin, setPinLogin] = useState(profile?.pin_login ?? false);
+  const hasPin = pinMode === "keep" || (pinMode === "set" && !!pin.trim());
   const { data: allLangs = [] } = useQuery({ queryKey: ["languages"], queryFn: api.languages });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,7 +168,15 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
     if (!name.trim()) return setError("Scrivi un nome");
     setBusy(true);
     try {
-      const body: ProfileInput = { name: name.trim(), avatar, color, languages: langs, audiobooks: books, easy };
+      const body: ProfileInput = {
+        name: name.trim(),
+        avatar,
+        color,
+        languages: langs,
+        audiobooks: books,
+        easy,
+        pin_login: pinLogin && hasPin,
+      };
       if (pinMode === "remove") body.pin = "";
       else if (pinMode === "set" && pin.trim()) body.pin = pin.trim();
       if (profile) {
@@ -270,43 +299,56 @@ function ProfileEditor({ profile, canDelete, onClose }: { profile: Profile | nul
           />
         </label>
 
-        {easy && (
-          <div className="px-5 pb-3">
-            <span className="block text-xs font-bold uppercase tracking-wider text-muted-foreground">PIN per uscire</span>
-            {pinMode === "keep" ? (
-              <div className="mt-1.5 flex items-center gap-2">
-                <span className="flex-1 text-sm text-white/80">PIN impostato</span>
-                <Button size="sm" variant="secondary" onClick={() => setPinMode("set")}>
-                  Cambia
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setPinMode("remove")}>
-                  Togli
-                </Button>
-              </div>
-            ) : pinMode === "remove" ? (
-              <div className="mt-1.5 flex items-center gap-2">
-                <span className="flex-1 text-sm text-white/60">Il PIN verrà tolto: per uscire servirà la password genitori.</span>
-                <Button size="sm" variant="ghost" onClick={() => setPinMode("keep")}>
-                  Annulla
-                </Button>
-              </div>
-            ) : (
-              <>
-                <input
-                  value={pin}
-                  onChange={(e) => setPin(e.target.value)}
-                  maxLength={32}
-                  autoComplete="off"
-                  placeholder={profile?.pin ? "Nuovo PIN (vuoto = lascia quello di prima)" : "Es. 1234 (facoltativo)"}
-                  className="mt-1.5 h-10 w-full rounded-xl bg-white/10 px-3 text-[16px] font-semibold outline-none placeholder:font-normal placeholder:text-white/40 focus:ring-2 focus:ring-primary"
-                />
-                <span className="mt-1 block text-xs text-white/50">
-                  Solo numeri: per uscire compare un tastierino. Va bene anche una parola.
-                </span>
-              </>
-            )}
-          </div>
-        )}
+        <div className="px-5 pb-3">
+          <span className="block text-xs font-bold uppercase tracking-wider text-muted-foreground">PIN del profilo</span>
+          {pinMode === "keep" ? (
+            <div className="mt-1.5 flex items-center gap-2">
+              <span className="flex-1 text-sm text-white/80">PIN impostato</span>
+              <Button size="sm" variant="secondary" onClick={() => setPinMode("set")}>
+                Cambia
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setPinMode("remove")}>
+                Togli
+              </Button>
+            </div>
+          ) : pinMode === "remove" ? (
+            <div className="mt-1.5 flex items-center gap-2">
+              <span className="flex-1 text-sm text-white/60">Il PIN verrà tolto: al suo posto servirà la password genitori.</span>
+              <Button size="sm" variant="ghost" onClick={() => setPinMode("keep")}>
+                Annulla
+              </Button>
+            </div>
+          ) : (
+            <>
+              <input
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                maxLength={32}
+                autoComplete="off"
+                placeholder={profile?.pin ? "Nuovo PIN (vuoto = lascia quello di prima)" : "Es. 1234 (facoltativo)"}
+                className="mt-1.5 h-10 w-full rounded-xl bg-white/10 px-3 text-[16px] font-semibold outline-none placeholder:font-normal placeholder:text-white/40 focus:ring-2 focus:ring-primary"
+              />
+              <span className="mt-1 block text-xs text-white/50">
+                Solo numeri: compare un tastierino. Va bene anche una parola.
+              </span>
+            </>
+          )}
+          {hasPin && (
+            <label className="mt-3 flex items-center justify-between gap-4">
+              <span className="text-sm">
+                Chiedi il PIN per entrare
+                <span className="block text-xs text-white/50">In «Chi ascolta?», prima di passare a questo profilo</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={pinLogin}
+                onChange={(e) => setPinLogin(e.target.checked)}
+                className="h-5 w-5 shrink-0 accent-[hsl(var(--primary))]"
+              />
+            </label>
+          )}
+          {easy && hasPin && <span className="mt-2 block text-xs text-white/50">Serve anche per uscire dalla modalità Easy.</span>}
+        </div>
 
         <div className="flex gap-1 px-5">
           {(["faces", "figures"] as const).map((t) => (
